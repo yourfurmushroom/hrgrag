@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from experiment_naming import build_run_tag, with_run_tag, grammar_candidate_paths
 
 
-login()
+# login()
 # ==========================================
 # 1. 設定與資料集
 # ==========================================
@@ -50,13 +50,13 @@ MODEL_BACKBONES = [
     #     "strict_gpu_sharding": True,
     #     "target_device": None,
     # },
-    # {
-    #     "tag": "qwen3.5",
-    #     "model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",
-    #     "use_model_sharding": True,
-    #     "strict_gpu_sharding": True,
-    #     "target_device": None,
-    # },
+    {
+        "tag": "qwen3.5",
+        "model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+        "use_model_sharding": False,
+        "strict_gpu_sharding": False,
+        "target_device": "cuda:0",
+    },
     # {
     #     "tag": "llama3.1",
     #     "model_id": "meta-llama/Llama-3.1-8B-Instruct",
@@ -64,13 +64,13 @@ MODEL_BACKBONES = [
     #     "strict_gpu_sharding": False,
     #     "target_device": "cuda:0",
     # },
-    {
-        "tag": "llama3.2",
-        "model_id": "meta-llama/Llama-3.2-1B-Instruct",
-        "use_model_sharding": False,
-        "strict_gpu_sharding": False,
-        "target_device": "cuda:0",
-    },
+    # {
+    #     "tag": "llama3.2",
+    #     "model_id": "meta-llama/Llama-3.2-1B-Instruct",
+    #     "use_model_sharding": False,
+    #     "strict_gpu_sharding": False,
+    #     "target_device": "cuda:0",
+    # },
     {
         "tag": "qwen2.5",
         "model_id": "Qwen/Qwen2.5-7B-Instruct",
