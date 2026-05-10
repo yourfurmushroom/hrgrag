@@ -177,6 +177,23 @@ def build_model_specs():
 
         specs.extend(
             paired_serialization_specs(
+                base_name=f"Spine-FrequencyExpansion-{tag}",
+                model_id=model_id,
+                shared_group=f"Spine-FrequencyExpansion-{tag}",
+                base_kwargs={
+                    "use_grammar_rerank": False,
+                    "use_grammar_expansion": False,
+                    "use_frequency_expansion": True,
+                    "use_fallback_correction": False,
+                    "use_grammar_hint": False,
+                    "expansion_per_node_cap": 5,
+                    "grammar_path": None,
+                },
+            )
+        )
+
+        specs.extend(
+            paired_serialization_specs(
                 base_name=f"HRG-Proposed-{tag}",
                 model_id=model_id,
                 shared_group=f"HRG-Proposed-{tag}",

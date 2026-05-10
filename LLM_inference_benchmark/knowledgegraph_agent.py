@@ -133,6 +133,7 @@ class KnowledgeGraphAgent:
         expansion_min_prob: float = 0.005,   # min rule probability/count to use
         expansion_per_node_cap: int = 10,    # max expansion edges added per node
         use_random_expansion: bool = False,
+        use_frequency_expansion: bool = False,
         random_expansion_seed: int = 0,
         # ---- Ablation D: context top-K edge truncation ----
         top_k_edges: Optional[int] = None,
@@ -160,6 +161,7 @@ class KnowledgeGraphAgent:
         self.expansion_min_prob = expansion_min_prob
         self.expansion_per_node_cap = expansion_per_node_cap
         self.use_random_expansion = use_random_expansion
+        self.use_frequency_expansion = use_frequency_expansion
         self.random_expansion_seed = random_expansion_seed
         self.top_k_edges = top_k_edges
         self.use_grammar_guided_retrieval = use_grammar_guided_retrieval
@@ -198,6 +200,7 @@ class KnowledgeGraphAgent:
         self.allowed_rel_set = set(self.relations)
         self.allowed_rel_tokens = set(self.relations) | {f"{r}^-1" for r in self.relations}
         self._node_index = build_node_index(self.all_nodes, self.alias_map)
+        self.relation_frequency = self._compute_relation_frequency()
 
         if grammar_path and Path(grammar_path).exists():
             self.hrg = HRGMatcher(grammar_path)
@@ -229,6 +232,13 @@ class KnowledgeGraphAgent:
             max_triples=self.max_kb_triples,
         )
         return rels or derived_relations
+
+    def _compute_relation_frequency(self) -> Dict[str, int]:
+        freq: Dict[str, int] = defaultdict(int)
+        for head_rels in self.kb_out.values():
+            for rel, tails in head_rels.items():
+                freq[rel] += len(tails)
+        return dict(freq)
 
     async def _inference(self, developer_instruction: str, user_content: str) -> str:
         return await self.llm.inference(developer_instruction, user_content)
@@ -995,6 +1005,66 @@ class KnowledgeGraphAgent:
             expanded_edges = expanded_edges[: self.max_frontier]
         return expanded_edges
 
+    def _expand_subgraph_by_relation_frequency(
+        self,
+        spine_edges: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        spine_nodes = set()
+        for e in spine_edges:
+            spine_nodes.add(e["head"])
+            spine_nodes.add(e["tail"])
+
+        if not spine_nodes:
+            return []
+
+        expanded_edges = []
+        visited = set((e["head"], e["relation"], e["tail"]) for e in spine_edges)
+
+        for ent in sorted(spine_nodes):
+            sanitized_ent = self._resolve_entity_to_kb(ent)
+            if not sanitized_ent:
+                continue
+
+            candidate_edges = []
+            for rel, tails in self.kb_out.get(sanitized_ent, {}).items():
+                rel_freq = self.relation_frequency.get(rel, 0)
+                for t in tails:
+                    edge = {
+                        "head": ent,
+                        "relation": rel,
+                        "tail": self._display_entity(t),
+                        "count": 1,
+                    }
+                    edge_tuple = (edge["head"], edge["relation"], edge["tail"])
+                    if edge_tuple not in visited:
+                        candidate_edges.append((rel_freq, edge_tuple, edge))
+
+            for rel, heads in self.kb_in.get(sanitized_ent, {}).items():
+                rel_freq = self.relation_frequency.get(rel, 0)
+                for h in heads:
+                    edge = {
+                        "head": self._display_entity(h),
+                        "relation": rel,
+                        "tail": ent,
+                        "count": 1,
+                    }
+                    edge_tuple = (edge["head"], edge["relation"], edge["tail"])
+                    if edge_tuple not in visited:
+                        candidate_edges.append((rel_freq, edge_tuple, edge))
+
+            if not candidate_edges:
+                continue
+
+            candidate_edges.sort(key=lambda x: (-x[0], x[1]))
+            selected = candidate_edges[: self.expansion_per_node_cap]
+            for _, edge_tuple, edge in selected:
+                visited.add(edge_tuple)
+                expanded_edges.append(edge)
+
+        if len(expanded_edges) > self.max_frontier:
+            expanded_edges = expanded_edges[: self.max_frontier]
+        return expanded_edges
+
     def _make_direction_flip_candidates(self, entity: str, chain: List[str]) -> List[Dict[str, Any]]:
         """
         Generate candidates by flipping one relation direction at a time.
@@ -1198,6 +1268,8 @@ class KnowledgeGraphAgent:
             matched_rules = selected_rules
             if matched_rules:
                 expanded_edges = self._expand_subgraph_by_grammar(spine_edges, matched_rules, chain=chain)
+        elif self.use_frequency_expansion and not is_single_hop:
+            expanded_edges = self._expand_subgraph_by_relation_frequency(spine_edges)
         elif self.use_random_expansion and not is_single_hop:
             expanded_edges = self._expand_subgraph_random(spine_edges, chain=chain)
         elif is_single_hop:
