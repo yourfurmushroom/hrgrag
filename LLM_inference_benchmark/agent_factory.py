@@ -17,15 +17,20 @@ def needs_harmony(model_id: str) -> bool:
 def build_llm_strategy(
     model_id: str,
     max_new_tokens: int = 1024,
-    use_model_sharding: bool = False,
-    strict_gpu_sharding: bool = False,
+    use_model_sharding: bool | None = None,
+    strict_gpu_sharding: bool | None = None,
     target_device: str | None = None,
 ):
     env_sharding = os.getenv("ENABLE_MODEL_SHARDING", "").strip().lower()
     env_strict = os.getenv("STRICT_GPU_SHARDING", "").strip().lower() in {"1", "true", "yes"}
 
-    use_sharding = use_model_sharding or env_sharding in {"1", "true", "yes"}
-    strict_gpu_sharding = strict_gpu_sharding or env_strict
+    if use_model_sharding is None:
+        use_sharding = env_sharding in {"1", "true", "yes"}
+    else:
+        use_sharding = use_model_sharding
+
+    if strict_gpu_sharding is None:
+        strict_gpu_sharding = env_strict
 
     if use_sharding:
         max_memory = {}

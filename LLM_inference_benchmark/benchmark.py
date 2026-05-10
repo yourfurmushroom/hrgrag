@@ -42,20 +42,20 @@ DEFAULT_QA_DUMP_ROOT = os.path.join(ARTIFACTS_ROOT, "shared", "qa_dataset_dump")
 HOP_TO_DEPTH = {"1-hop": 1, "2-hop": 2, "3-hop": 3}
 
 MODEL_BACKBONES = [
-    {
-        "tag": "gpt-oss",
-        "model_id": "openai/gpt-oss-20b",
-        "use_model_sharding": True,
-        "strict_gpu_sharding": True,
-        "target_device": None,
-    },
-    {
-        "tag": "qwen3.5",
-        "model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",
-        "use_model_sharding": True,
-        "strict_gpu_sharding": True,
-        "target_device": None,
-    },
+    # {
+    #     "tag": "gpt-oss",
+    #     "model_id": "openai/gpt-oss-20b",
+    #     "use_model_sharding": True,
+    #     "strict_gpu_sharding": True,
+    #     "target_device": None,
+    # },
+    # {
+    #     "tag": "qwen3.5",
+    #     "model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    #     "use_model_sharding": True,
+    #     "strict_gpu_sharding": True,
+    #     "target_device": None,
+    # },
     {
         "tag": "llama3.1",
         "model_id": "meta-llama/Llama-3.1-8B-Instruct",
