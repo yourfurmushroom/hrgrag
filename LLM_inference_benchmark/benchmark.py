@@ -41,6 +41,21 @@ DEFAULT_QA_DUMP_ROOT = os.path.join(ARTIFACTS_ROOT, "shared", "qa_dataset_dump")
 # Hop count 對應 BFS 深度（用於 baseline 及 Mode-C)
 HOP_TO_DEPTH = {"1-hop": 1, "2-hop": 2, "3-hop": 3}
 
+MODEL_BACKBONES = [
+    {
+        "tag": "Qwen3.5",
+        "model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    },
+    {
+        "tag": "llama3.1",
+        "model_id": "meta-llama/Llama-3.1-8B-Instruct",
+    },
+    {
+        "tag": "qwen2.5",
+        "model_id": "Qwen/Qwen2.5-7B-Instruct",
+    },
+]
+
 
 def paired_serialization_specs(
     base_name: str,
@@ -62,158 +77,128 @@ def paired_serialization_specs(
         }, False),
     ]
 
+
+def single_agent_specs(
+    base_name: str,
+    model_id: str,
+    shared_group: str,
+    base_kwargs: dict,
+    agent_class=KnowledgeGraphAgent,
+    is_baseline: bool = False,
+):
+    common = dict(base_kwargs)
+    common["model_id"] = model_id
+    common["shared_retrieval_group"] = shared_group
+    return [
+        (base_name, agent_class, common, is_baseline),
+    ]
+
+
+def build_model_specs():
+    specs = []
+    for backbone in MODEL_BACKBONES:
+        tag = backbone["tag"]
+        model_id = backbone["model_id"]
+
+        specs.extend(
+            single_agent_specs(
+                base_name=f"Baseline-BFS-{tag}",
+                model_id=model_id,
+                shared_group=f"Baseline-BFS-{tag}",
+                base_kwargs={"bfs_depth": 3},
+                agent_class=BaselineAgent,
+                is_baseline=True,
+            )
+        )
+
+        specs.extend(
+            paired_serialization_specs(
+                base_name=f"Spine-Only-{tag}",
+                model_id=model_id,
+                shared_group=f"Spine-Only-{tag}",
+                base_kwargs={
+                    "use_grammar_rerank": False,
+                    "use_grammar_expansion": False,
+                    "use_fallback_correction": False,
+                    "use_grammar_hint": False,
+                    "grammar_path": None,
+                },
+            )
+        )
+
+        specs.extend(
+            paired_serialization_specs(
+                base_name=f"Spine-Correction-{tag}",
+                model_id=model_id,
+                shared_group=f"Spine-Correction-{tag}",
+                base_kwargs={
+                    "use_grammar_rerank": False,
+                    "use_grammar_expansion": False,
+                    "use_fallback_correction": True,
+                    "use_grammar_hint": False,
+                    "grammar_path": None,
+                },
+            )
+        )
+
+        specs.extend(
+            paired_serialization_specs(
+                base_name=f"Spine-GrammarExpansion-{tag}",
+                model_id=model_id,
+                shared_group=f"Spine-GrammarExpansion-{tag}",
+                base_kwargs={
+                    "use_grammar_rerank": False,
+                    "use_grammar_expansion": True,
+                    "use_fallback_correction": False,
+                    "use_grammar_hint": False,
+                    "expansion_strict": True,
+                    "expansion_min_prob": 0.005,
+                    "expansion_per_node_cap": 5,
+                },
+            )
+        )
+
+        specs.extend(
+            paired_serialization_specs(
+                base_name=f"Spine-RandomExpansion-{tag}",
+                model_id=model_id,
+                shared_group=f"Spine-RandomExpansion-{tag}",
+                base_kwargs={
+                    "use_grammar_rerank": False,
+                    "use_grammar_expansion": False,
+                    "use_random_expansion": True,
+                    "use_fallback_correction": False,
+                    "use_grammar_hint": False,
+                    "expansion_per_node_cap": 5,
+                    "grammar_path": None,
+                },
+            )
+        )
+
+        specs.extend(
+            paired_serialization_specs(
+                base_name=f"HRG-Proposed-{tag}",
+                model_id=model_id,
+                shared_group=f"HRG-Proposed-{tag}",
+                base_kwargs={
+                    "use_grammar_rerank": False,
+                    "use_grammar_expansion": True,
+                    "use_fallback_correction": True,
+                    "use_grammar_hint": False,
+                    "expansion_strict": True,
+                    "expansion_min_prob": 0.005,
+                    "expansion_per_node_cap": 5,
+                },
+            )
+        )
+
+    return specs
+
 # ==========================================
 # MODEL_SPECS
 # 格式：(顯示名稱, Agent類, 初始化參數, 是_baseline)
 # ==========================================
-MODEL_SPECS = [
-    ("Baseline-BFS-llama3.1", BaselineAgent, {
-        "model_id": "meta-llama/Llama-3.1-8B-Instruct",
-        "bfs_depth": 3,
-    }, True),
-    ("Baseline-BFS-qwen2.5", BaselineAgent, {
-        "model_id": "Qwen/Qwen2.5-7B-Instruct",
-        "bfs_depth": 3,
-    }, True),
-
-    # Core four-quadrant ablation: isolate correction vs. expansion.
-    *paired_serialization_specs(
-        base_name="Spine-Only-llama3.1",
-        model_id="meta-llama/Llama-3.1-8B-Instruct",
-        shared_group="Spine-Only-llama3.1",
-        base_kwargs={
-            "use_grammar_rerank": False,
-            "use_grammar_expansion": False,
-            "use_fallback_correction": False,
-            "use_grammar_hint": False,
-            "grammar_path": None,
-        },
-    ),
-    *paired_serialization_specs(
-        base_name="Spine-Only-qwen2.5",
-        model_id="Qwen/Qwen2.5-7B-Instruct",
-        shared_group="Spine-Only-qwen2.5",
-        base_kwargs={
-            "use_grammar_rerank": False,
-            "use_grammar_expansion": False,
-            "use_fallback_correction": False,
-            "use_grammar_hint": False,
-            "grammar_path": None,
-        },
-    ),
-
-    *paired_serialization_specs(
-        base_name="Spine-Correction-llama3.1",
-        model_id="meta-llama/Llama-3.1-8B-Instruct",
-        shared_group="Spine-Correction-llama3.1",
-        base_kwargs={
-            "use_grammar_rerank": False,
-            "use_grammar_expansion": False,
-            "use_fallback_correction": True,
-            "use_grammar_hint": False,
-            "grammar_path": None,
-        },
-    ),
-    *paired_serialization_specs(
-        base_name="Spine-Correction-qwen2.5",
-        model_id="Qwen/Qwen2.5-7B-Instruct",
-        shared_group="Spine-Correction-qwen2.5",
-        base_kwargs={
-            "use_grammar_rerank": False,
-            "use_grammar_expansion": False,
-            "use_fallback_correction": True,
-            "use_grammar_hint": False,
-            "grammar_path": None,
-        },
-    ),
-
-    *paired_serialization_specs(
-        base_name="Spine-GrammarExpansion-llama3.1",
-        model_id="meta-llama/Llama-3.1-8B-Instruct",
-        shared_group="Spine-GrammarExpansion-llama3.1",
-        base_kwargs={
-            "use_grammar_rerank": False,
-            "use_grammar_expansion": True,
-            "use_fallback_correction": False,
-            "use_grammar_hint": False,
-            "expansion_strict": True,
-            "expansion_min_prob": 0.005,
-            "expansion_per_node_cap": 5,
-        },
-    ),
-    *paired_serialization_specs(
-        base_name="Spine-GrammarExpansion-qwen2.5",
-        model_id="Qwen/Qwen2.5-7B-Instruct",
-        shared_group="Spine-GrammarExpansion-qwen2.5",
-        base_kwargs={
-            "use_grammar_rerank": False,
-            "use_grammar_expansion": True,
-            "use_fallback_correction": False,
-            "use_grammar_hint": False,
-            "expansion_strict": True,
-            "expansion_min_prob": 0.005,
-            "expansion_per_node_cap": 5,
-        },
-    ),
-
-    *paired_serialization_specs(
-        base_name="Spine-RandomExpansion-llama3.1",
-        model_id="meta-llama/Llama-3.1-8B-Instruct",
-        shared_group="Spine-RandomExpansion-llama3.1",
-        base_kwargs={
-            "use_grammar_rerank": False,
-            "use_grammar_expansion": False,
-            "use_random_expansion": True,
-            "use_fallback_correction": False,
-            "use_grammar_hint": False,
-            "expansion_per_node_cap": 5,
-            "grammar_path": None,
-        },
-    ),
-    *paired_serialization_specs(
-        base_name="Spine-RandomExpansion-qwen2.5",
-        model_id="Qwen/Qwen2.5-7B-Instruct",
-        shared_group="Spine-RandomExpansion-qwen2.5",
-        base_kwargs={
-            "use_grammar_rerank": False,
-            "use_grammar_expansion": False,
-            "use_random_expansion": True,
-            "use_fallback_correction": False,
-            "use_grammar_hint": False,
-            "expansion_per_node_cap": 5,
-            "grammar_path": None,
-        },
-    ),
-
-    *paired_serialization_specs(
-        base_name="HRG-Proposed-llama3.1",
-        model_id="meta-llama/Llama-3.1-8B-Instruct",
-        shared_group="HRG-Proposed-llama3.1",
-        base_kwargs={
-            "use_grammar_rerank": False,
-            "use_grammar_expansion": True,
-            "use_fallback_correction": True,
-            "use_grammar_hint": False,
-            "expansion_strict": True,
-            "expansion_min_prob": 0.005,
-            "expansion_per_node_cap": 5,
-        },
-    ),
-    *paired_serialization_specs(
-        base_name="HRG-Proposed-qwen2.5",
-        model_id="Qwen/Qwen2.5-7B-Instruct",
-        shared_group="HRG-Proposed-qwen2.5",
-        base_kwargs={
-            "use_grammar_rerank": False,
-            "use_grammar_expansion": True,
-            "use_fallback_correction": True,
-            "use_grammar_hint": False,
-            "expansion_strict": True,
-            "expansion_min_prob": 0.005,
-            "expansion_per_node_cap": 5,
-        },
-    ),
-]
+MODEL_SPECS = build_model_specs()
 
 
 
@@ -310,7 +295,8 @@ def resolve_run_tag(args):
 
 
 def infer_backbone(model_name: str) -> Optional[str]:
-    for tag in ("llama3.1", "qwen2.5"):
+    for backbone in MODEL_BACKBONES:
+        tag = backbone["tag"]
         if tag in model_name:
             return tag
     return None
