@@ -31,12 +31,21 @@ class BaselineKnowledgeGraphAgent:
         kb_path: str = "../Datasets/MetaQA/kb.txt",
         relation_path: Optional[str] = "../Datasets/MetaQA/relations.json",
         max_new_tokens: int = 1024,
+        use_model_sharding: bool = False,
+        strict_gpu_sharding: bool = False,
+        target_device: Optional[str] = None,
         bfs_depth: int = 2,             # BFS 展開最大深度
         max_edges_per_hop: int = 500,   # 防爆：每 hop 最多保留多少條邊
         max_frontier: int = 5000,       # 防爆：frontier node 上限
     ):
         print(f"[Init] Loading LLM strategy for: {model_id} ...")
-        self.llm = build_llm_strategy(model_id=model_id, max_new_tokens=max_new_tokens)
+        self.llm = build_llm_strategy(
+            model_id=model_id,
+            max_new_tokens=max_new_tokens,
+            use_model_sharding=use_model_sharding,
+            strict_gpu_sharding=strict_gpu_sharding,
+            target_device=target_device,
+        )
 
         self.bfs_depth = bfs_depth
         self.max_edges_per_hop = max_edges_per_hop

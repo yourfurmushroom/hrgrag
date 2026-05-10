@@ -115,6 +115,9 @@ class KnowledgeGraphAgent:
         relation_path: Optional[str] = "../Datasets/MetaQA/relations.json",
         grammar_path: Optional[str] = "../hrg_grammar/metaqa_phrg_grammar.json",
         max_new_tokens: int = 1024,
+        use_model_sharding: bool = False,
+        strict_gpu_sharding: bool = False,
+        target_device: Optional[str] = None,
         max_kb_triples: Optional[int] = None,
         max_frontier: int = 20000,
         per_entity_cap: int = 500,
@@ -144,6 +147,9 @@ class KnowledgeGraphAgent:
         self.llm = build_llm_strategy(
             model_id=model_id,
             max_new_tokens=max_new_tokens,
+            use_model_sharding=use_model_sharding,
+            strict_gpu_sharding=strict_gpu_sharding,
+            target_device=target_device,
         )
 
         self.serialization_format = serialization_format

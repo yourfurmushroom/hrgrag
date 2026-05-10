@@ -12,6 +12,17 @@ class LLMStrategy(ABC):
         if self.model.config.pad_token_id is None:
             self.model.config.pad_token_id = self.model.config.eos_token_id
 
+    def _input_device(self):
+        """Use the embedding/input device for dispatched HF models."""
+        try:
+            return self.model.get_input_embeddings().weight.device
+        except Exception:
+            pass
+        try:
+            return next(self.model.parameters()).device
+        except StopIteration:
+            return torch.device("cpu")
+
     @abstractmethod
     async def inference(self, developer_instruction: str, user_content: str) -> str:
         """Return raw model text (may include special tokens)."""
@@ -56,8 +67,9 @@ class HarmonyHFStrategy(LLMStrategy):
 
         tokens = self.enc.render_conversation_for_completion(convo, self.Role.ASSISTANT)
 
-        input_tensor = torch.tensor([tokens]).to(self.model.device)
-        attention_mask = torch.ones_like(input_tensor).to(self.model.device)
+        input_device = self._input_device()
+        input_tensor = torch.tensor([tokens], device=input_device)
+        attention_mask = torch.ones_like(input_tensor, device=input_device)
 
         with torch.no_grad():
             out = self.model.generate(
@@ -117,7 +129,8 @@ class GenericHFStrategy(LLMStrategy):
                 "Assistant:"
             )
 
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        input_device = self._input_device()
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(input_device)
 
         with torch.no_grad():
             out = self.model.generate(

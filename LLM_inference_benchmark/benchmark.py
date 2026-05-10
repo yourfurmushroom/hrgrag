@@ -45,18 +45,30 @@ MODEL_BACKBONES = [
     {
         "tag": "gpt-oss",
         "model_id": "openai/gpt-oss-20b",
+        "use_model_sharding": True,
+        "strict_gpu_sharding": True,
+        "target_device": None,
     },
     {
-        "tag": "Qwen3.5",
+        "tag": "qwen3.5",
         "model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+        "use_model_sharding": True,
+        "strict_gpu_sharding": True,
+        "target_device": None,
     },
     {
         "tag": "llama3.1",
         "model_id": "meta-llama/Llama-3.1-8B-Instruct",
+        "use_model_sharding": False,
+        "strict_gpu_sharding": False,
+        "target_device": "cuda:0",
     },
     {
         "tag": "qwen2.5",
         "model_id": "Qwen/Qwen2.5-7B-Instruct",
+        "use_model_sharding": False,
+        "strict_gpu_sharding": False,
+        "target_device": "cuda:0",
     },
 ]
 
@@ -103,13 +115,18 @@ def build_model_specs():
     for backbone in MODEL_BACKBONES:
         tag = backbone["tag"]
         model_id = backbone["model_id"]
+        llm_device_kwargs = {
+            "use_model_sharding": backbone.get("use_model_sharding", False),
+            "strict_gpu_sharding": backbone.get("strict_gpu_sharding", False),
+            "target_device": backbone.get("target_device"),
+        }
 
         specs.extend(
             single_agent_specs(
                 base_name=f"Baseline-BFS-{tag}",
                 model_id=model_id,
                 shared_group=f"Baseline-BFS-{tag}",
-                base_kwargs={"bfs_depth": 3},
+                base_kwargs={"bfs_depth": 3, **llm_device_kwargs},
                 agent_class=BaselineAgent,
                 is_baseline=True,
             )
@@ -121,6 +138,7 @@ def build_model_specs():
                 model_id=model_id,
                 shared_group=f"Spine-Only-{tag}",
                 base_kwargs={
+                    **llm_device_kwargs,
                     "use_grammar_rerank": False,
                     "use_grammar_expansion": False,
                     "use_fallback_correction": False,
@@ -136,6 +154,7 @@ def build_model_specs():
                 model_id=model_id,
                 shared_group=f"Spine-Correction-{tag}",
                 base_kwargs={
+                    **llm_device_kwargs,
                     "use_grammar_rerank": False,
                     "use_grammar_expansion": False,
                     "use_fallback_correction": True,
@@ -151,6 +170,7 @@ def build_model_specs():
                 model_id=model_id,
                 shared_group=f"Spine-GrammarExpansion-{tag}",
                 base_kwargs={
+                    **llm_device_kwargs,
                     "use_grammar_rerank": False,
                     "use_grammar_expansion": True,
                     "use_fallback_correction": False,
@@ -168,6 +188,7 @@ def build_model_specs():
                 model_id=model_id,
                 shared_group=f"Spine-RandomExpansion-{tag}",
                 base_kwargs={
+                    **llm_device_kwargs,
                     "use_grammar_rerank": False,
                     "use_grammar_expansion": False,
                     "use_random_expansion": True,
@@ -185,6 +206,7 @@ def build_model_specs():
                 model_id=model_id,
                 shared_group=f"Spine-FrequencyExpansion-{tag}",
                 base_kwargs={
+                    **llm_device_kwargs,
                     "use_grammar_rerank": False,
                     "use_grammar_expansion": False,
                     "use_frequency_expansion": True,
@@ -202,6 +224,7 @@ def build_model_specs():
                 model_id=model_id,
                 shared_group=f"HRG-Proposed-{tag}",
                 base_kwargs={
+                    **llm_device_kwargs,
                     "use_grammar_rerank": False,
                     "use_grammar_expansion": True,
                     "use_fallback_correction": True,
