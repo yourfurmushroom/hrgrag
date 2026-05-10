@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from experiment_naming import build_run_tag, with_run_tag, grammar_candidate_paths
 
 
-login() #api here
+login()
 # ==========================================
 # 1. 設定與資料集
 # ==========================================
@@ -128,18 +128,12 @@ def build_model_specs():
             "strict_gpu_sharding": backbone.get("strict_gpu_sharding", False),
             "target_device": backbone.get("target_device"),
         }
-        llm_device_kwargs = {
-            "use_model_sharding": backbone.get("use_model_sharding", False),
-            "strict_gpu_sharding": backbone.get("strict_gpu_sharding", False),
-            "target_device": backbone.get("target_device"),
-        }
 
         specs.extend(
             single_agent_specs(
                 base_name=f"Baseline-BFS-{tag}",
                 model_id=model_id,
                 shared_group=f"Baseline-BFS-{tag}",
-                base_kwargs={"bfs_depth": 3, **llm_device_kwargs},
                 base_kwargs={"bfs_depth": 3, **llm_device_kwargs},
                 agent_class=BaselineAgent,
                 is_baseline=True,
@@ -152,7 +146,6 @@ def build_model_specs():
                 model_id=model_id,
                 shared_group=f"Spine-Only-{tag}",
                 base_kwargs={
-                    **llm_device_kwargs,
                     **llm_device_kwargs,
                     "use_grammar_rerank": False,
                     "use_grammar_expansion": False,
@@ -170,7 +163,6 @@ def build_model_specs():
                 shared_group=f"Spine-Correction-{tag}",
                 base_kwargs={
                     **llm_device_kwargs,
-                    **llm_device_kwargs,
                     "use_grammar_rerank": False,
                     "use_grammar_expansion": False,
                     "use_fallback_correction": True,
@@ -186,7 +178,6 @@ def build_model_specs():
                 model_id=model_id,
                 shared_group=f"Spine-GrammarExpansion-{tag}",
                 base_kwargs={
-                    **llm_device_kwargs,
                     **llm_device_kwargs,
                     "use_grammar_rerank": False,
                     "use_grammar_expansion": True,
@@ -206,7 +197,6 @@ def build_model_specs():
                 shared_group=f"Spine-RandomExpansion-{tag}",
                 base_kwargs={
                     **llm_device_kwargs,
-                    **llm_device_kwargs,
                     "use_grammar_rerank": False,
                     "use_grammar_expansion": False,
                     "use_random_expansion": True,
@@ -225,7 +215,6 @@ def build_model_specs():
                 shared_group=f"Spine-FrequencyExpansion-{tag}",
                 base_kwargs={
                     **llm_device_kwargs,
-                    **llm_device_kwargs,
                     "use_grammar_rerank": False,
                     "use_grammar_expansion": False,
                     "use_frequency_expansion": True,
@@ -243,7 +232,6 @@ def build_model_specs():
                 model_id=model_id,
                 shared_group=f"HRG-Proposed-{tag}",
                 base_kwargs={
-                    **llm_device_kwargs,
                     **llm_device_kwargs,
                     "use_grammar_rerank": False,
                     "use_grammar_expansion": True,
