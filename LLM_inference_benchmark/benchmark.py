@@ -12,6 +12,7 @@ import torch
 import pandas as pd
 import sys
 import re
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
@@ -22,9 +23,6 @@ from baseline import BaselineKnowledgeGraphAgent as BaselineAgent
 from dataset_utils import load_custom_dataset, load_metaqa_dataset, load_mlpq_dataset, load_normalized_jsonl_dataset, load_wikimovies_dataset, resolve_mlpq_kb_path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from experiment_naming import build_run_tag, with_run_tag, grammar_candidate_paths
-
-
-# login()
 # ==========================================
 # 1. 設定與資料集
 # ==========================================
@@ -39,6 +37,26 @@ DEFAULT_MINTAKA_ROOT = os.path.join(PROJECT_ROOT, "Datasets", "Mintaka")
 ARTIFACTS_ROOT = os.path.join(PROJECT_ROOT, "artifacts")
 DEFAULT_QA_DUMP_ROOT = os.path.join(ARTIFACTS_ROOT, "shared", "qa_dataset_dump")
 
+
+def load_local_dotenv(env_path: str) -> None:
+    if not os.path.exists(env_path):
+        return
+    with open(env_path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            os.environ.setdefault(key, value)
+
+
+load_local_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN")
+if HF_TOKEN:
+    login(token=HF_TOKEN, add_to_git_credential=False)
+
 # Hop count 對應 BFS 深度（用於 baseline 及 Mode-C)
 HOP_TO_DEPTH = {"1-hop": 1, "2-hop": 2, "3-hop": 3}
 
@@ -52,25 +70,25 @@ MODEL_BACKBONES = [
     # },
     {
         "tag": "qwen3.5",
-        "model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+        "model_id": "Qwen/Qwen3.5-35B-A3B-FP8",
         "use_model_sharding": False,
         "strict_gpu_sharding": False,
         "target_device": "cuda:0",
     },
-    # {
-    #     "tag": "llama3.1",
-    #     "model_id": "meta-llama/Llama-3.1-8B-Instruct",
-    #     "use_model_sharding": False,
-    #     "strict_gpu_sharding": False,
-    #     "target_device": "cuda:0",
-    # },
-    # {
-    #     "tag": "llama3.2",
-    #     "model_id": "meta-llama/Llama-3.2-1B-Instruct",
-    #     "use_model_sharding": False,
-    #     "strict_gpu_sharding": False,
-    #     "target_device": "cuda:0",
-    # },
+    {
+        "tag": "llama3.1",
+        "model_id": "meta-llama/Llama-3.1-8B-Instruct",
+        "use_model_sharding": False,
+        "strict_gpu_sharding": False,
+        "target_device": "cuda:0",
+    },
+    {
+        "tag": "llama3.2",
+        "model_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "use_model_sharding": False,
+        "strict_gpu_sharding": False,
+        "target_device": "cuda:0",
+    },
     {
         "tag": "qwen2.5",
         "model_id": "Qwen/Qwen2.5-7B-Instruct",
@@ -254,7 +272,7 @@ MODEL_SPECS = build_model_specs()
 
 
 
-TEST_SAMPLE_LIMIT = 100
+TEST_SAMPLE_LIMIT = 1
 OUTPUT_FILE = os.path.join(ARTIFACTS_ROOT, "shared", "benchmark_results.json")
 
 DETAIL_DIR = os.path.join(ARTIFACTS_ROOT, "shared", "benchmark_details_csv")
@@ -445,14 +463,53 @@ def build_custom_dataset_splits(args):
     return grouped, hop_overrides
 
 
-def normalize_answer(text: str) -> str:
+_NUMBER_WORDS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+    "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14",
+    "fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18",
+    "nineteen": "19", "twenty": "20",
+}
+
+
+def _normalize_numeric_token(text: str) -> str:
+    token = (text or "").strip().lower()
+    if not token:
+        return ""
+    token = token.replace(",", "")
+    token = re.sub(r"\b(\d+)(st|nd|rd|th)\b", r"\1", token)
+    token = re.sub(r"\s+", " ", token).strip()
+    if token in _NUMBER_WORDS:
+        return _NUMBER_WORDS[token]
+    try:
+        value = Decimal(token)
+        if value == value.to_integral():
+            return str(int(value))
+        normalized = format(value.normalize(), "f").rstrip("0").rstrip(".")
+        return normalized or "0"
+    except InvalidOperation:
+        return token
+
+
+def normalize_answer(text: str, dataset: Optional[str] = None) -> str:
     text = (text or "").lower().strip()
+    if dataset == "kqapro":
+        text = text.replace(",", "")
+        text = re.sub(r"\b(\d+)(st|nd|rd|th)\b", r"\1", text)
+        text = re.sub(
+            r"\b(" + "|".join(re.escape(k) for k in _NUMBER_WORDS) + r")\b",
+            lambda m: _NUMBER_WORDS[m.group(1)],
+            text,
+        )
+        compact_numeric = _normalize_numeric_token(text)
+        if compact_numeric != text and re.fullmatch(r"[\d.\- ]+", compact_numeric):
+            text = compact_numeric
     text = re.sub(r"[_\s]+", " ", text)
     text = re.sub(r"[^\w\s]", "", text)
     return text.strip()
 
 
-def split_candidate_answers(text: str):
+def split_candidate_answers(text: str, dataset: Optional[str] = None):
     raw = (text or "").strip()
     if not raw:
         return []
@@ -461,7 +518,7 @@ def split_candidate_answers(text: str):
     normalized = []
     seen = set()
     for part in parts:
-        norm = normalize_answer(part)
+        norm = normalize_answer(part, dataset=dataset)
         if not norm or norm in seen:
             continue
         seen.add(norm)
@@ -469,11 +526,11 @@ def split_candidate_answers(text: str):
     return normalized
 
 
-def calculate_metrics(references, candidate):
+def calculate_metrics(references, candidate, dataset: Optional[str] = None):
     candidate_lower = (candidate or "").lower()
-    candidate_norm = normalize_answer(candidate)
-    ref_norms = [normalize_answer(ref) for ref in references if normalize_answer(ref)]
-    candidate_parts = split_candidate_answers(candidate)
+    candidate_norm = normalize_answer(candidate, dataset=dataset)
+    ref_norms = [normalize_answer(ref, dataset=dataset) for ref in references if normalize_answer(ref, dataset=dataset)]
+    candidate_parts = split_candidate_answers(candidate, dataset=dataset)
     candidate_set = set(candidate_parts)
     ref_set = set(ref_norms)
 
@@ -581,6 +638,7 @@ async def async_evaluate_question(
     hop_override=None,
     is_baseline=False,
     shared_prepare_path: Optional[str] = None,
+    dataset_key: Optional[str] = None,
 ):
     async with SEM:
         try:
@@ -640,14 +698,11 @@ async def async_evaluate_question(
                 )
 
             elapsed = time.time() - start_time
-            metrics = calculate_metrics(references, response)
+            metrics = calculate_metrics(references, response, dataset=dataset_key)
             pbar.update(1)
 
-            return {
-                "idx": idx,
-                "question": question,
-                "expected_outputs": "|".join(references),
-                "model_output": response,
+            payload = {
+                "answer": response,
                 **metrics,
                 "elapsed": float(elapsed),
                 "failure_stage": (details or {}).get("failure_stage", "ok"),
@@ -656,6 +711,22 @@ async def async_evaluate_question(
                 "generation_latency": float((details or {}).get("generation_latency", 0.0) or 0.0),
                 "generation_failed": bool((details or {}).get("generation_failed", False)),
                 "answerable": bool((details or {}).get("answerable", bool((response or "").strip()))),
+            }
+
+            return {
+                "idx": idx,
+                "question": question,
+                "expected_outputs": "|".join(references),
+                "model_output": response,
+                "model_payload": json.dumps(payload, ensure_ascii=False),
+                **metrics,
+                "elapsed": float(elapsed),
+                "failure_stage": payload["failure_stage"],
+                "parse_latency": payload["parse_latency"],
+                "retrieval_latency": payload["retrieval_latency"],
+                "generation_latency": payload["generation_latency"],
+                "generation_failed": payload["generation_failed"],
+                "answerable": payload["answerable"],
             }
 
         except Exception as e:
@@ -668,6 +739,25 @@ async def async_evaluate_question(
                 "question": question,
                 "expected_outputs": "|".join(references),
                 "model_output": "",
+                "model_payload": json.dumps({
+                    "answer": "",
+                    "bleu": 0.0,
+                    "answer_recall": 0.0,
+                    "em": 0.0,
+                    "contains_hit": 0.0,
+                    "hit_at_1_any": 0.0,
+                    "answer_set_precision": 0.0,
+                    "answer_set_recall": 0.0,
+                    "answer_set_f1": 0.0,
+                    "elapsed": 0.0,
+                    "error": err_str,
+                    "failure_stage": failure_stage,
+                    "parse_latency": 0.0,
+                    "retrieval_latency": 0.0,
+                    "generation_latency": 0.0,
+                    "generation_failed": True,
+                    "answerable": False,
+                }, ensure_ascii=False),
                 "bleu": 0.0,
                 "answer_recall": 0.0,
                 "em": 0.0,
@@ -697,6 +787,7 @@ async def evaluate_single_model(
     agent_kwargs,
     dataset_splits,
     hop_overrides,
+    benchmark_dataset_name,
     sample_limit,
     run_tag,
     dump_root,
@@ -756,6 +847,7 @@ async def evaluate_single_model(
                     hop_override=hop_depth,
                     is_baseline=is_baseline,
                     shared_prepare_path=shared_prepare_path,
+                    dataset_key=benchmark_dataset_name,
                 )
             )
 
@@ -770,7 +862,7 @@ async def evaluate_single_model(
                 "question": r["question"],
                 "expected_outputs": r["expected_outputs"],
                 "model": run_model_name,
-                "model_output": r["model_output"],
+                "model_output": r.get("model_payload", r["model_output"]),
             })
 
         total_bleu = sum(r["bleu"] for r in results)
@@ -852,8 +944,23 @@ async def evaluate_single_model(
         avg_retrieval_precision = getattr(agent_instance, "total_retrieval_precision", 0.0) / total_recall_q
         avg_retrieval_f1 = getattr(agent_instance, "total_retrieval_f1", 0.0) / total_recall_q
 
+    all_results = [r for ds in model_results.values() if isinstance(ds, dict) for r in [ds]]
+    dataset_count = len(all_results)
+    overall = {
+        "bleu": round(sum(d["bleu"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
+        "answer_recall": round(sum(d["answer_recall"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
+        "em": round(sum(d["em"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
+        "contains_hit": round(sum(d["contains_hit"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
+        "hit_at_1_any": round(sum(d["hit_at_1_any"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
+        "answer_set_precision": round(sum(d["answer_set_precision"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
+        "answer_set_recall": round(sum(d["answer_set_recall"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
+        "answer_set_f1": round(sum(d["answer_set_f1"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
+        "avg_latency": round(sum(d["avg_latency"] for d in all_results) / dataset_count, 2) if dataset_count else 0.0,
+    }
+
     return {
         "results": model_results,
+        **overall,
         "coverage": coverage,
         "avg_ctx_tokens": avg_ctx_tokens,
         "avg_parse1_tokens": avg_parse1_tokens,
@@ -964,6 +1071,7 @@ async def main():
                 agent_kwargs,
                 dataset_splits=dataset_splits,
                 hop_overrides=hop_overrides,
+                benchmark_dataset_name=args.dataset,
                 sample_limit=args.sample_limit,
                 run_tag=run_tag,
                 dump_root=dump_root,

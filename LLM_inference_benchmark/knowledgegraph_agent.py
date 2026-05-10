@@ -228,6 +228,26 @@ class KnowledgeGraphAgent:
         text = re.sub(r"\s+", "_", text)
         return text
 
+    def _safe_int(self, value: Any, default: int = 0) -> int:
+        try:
+            if isinstance(value, list):
+                if not value:
+                    return default
+                value = value[0]
+            return int(value)
+        except Exception:
+            return default
+
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        try:
+            if isinstance(value, list):
+                if not value:
+                    return default
+                value = value[0]
+            return float(value)
+        except Exception:
+            return default
+
     def _desanitize(self, text: str) -> str:
         return text.replace("_", " ")
 
@@ -583,11 +603,7 @@ class KnowledgeGraphAgent:
                     print(f"[Parse1] Dropping invalid relation: {c}")
 
             if entity and chain:
-                confidence = item.get("confidence", 0.0)
-                try:
-                    confidence = max(0.0, min(1.0, float(confidence)))
-                except Exception:
-                    confidence = 0.0
+                confidence = max(0.0, min(1.0, self._safe_float(item.get("confidence", 0.0), 0.0)))
                 candidates.append({
                     "entity": entity,
                     "chain": chain,
@@ -1204,14 +1220,14 @@ class KnowledgeGraphAgent:
         if failed_hop is None:
             failure_progress = len(chain) + 1
         else:
-            failure_progress = failed_hop
+            failure_progress = self._safe_int(failed_hop, 0)
 
-        grammar_hit = int(grammar_features.get("hit", 0))
-        same_arity_hit = int(grammar_features.get("same_arity_hit", 0))
-        grammar_score = float(grammar_features.get("score", 0.0))
-        grammar_matched_count = min(int(grammar_features.get("matched_count", 0)), 20)
-        step_survival = sum(min(s, 10) for s in step_sizes)
-        final_size = min(kb_result.get("final_size", 0), 20)
+        grammar_hit = self._safe_int(grammar_features.get("hit", 0), 0)
+        same_arity_hit = self._safe_int(grammar_features.get("same_arity_hit", 0), 0)
+        grammar_score = self._safe_float(grammar_features.get("score", 0.0), 0.0)
+        grammar_matched_count = min(self._safe_int(grammar_features.get("matched_count", 0), 0), 20)
+        step_survival = sum(min(self._safe_int(s, 0), 10) for s in step_sizes)
+        final_size = min(self._safe_int(kb_result.get("final_size", 0), 0), 20)
 
         source_priority = 0
         if source == "llm":
@@ -1223,7 +1239,7 @@ class KnowledgeGraphAgent:
         elif source.startswith("flip_hop_"):
             source_priority = 1
 
-        llm_prior = -llm_rank_index
+        llm_prior = -self._safe_int(llm_rank_index, 0)
 
         return (
             valid,
@@ -1312,8 +1328,8 @@ class KnowledgeGraphAgent:
     ) -> Tuple[Any, ...]:
         has_edges = 1 if subgraph.get("final_edges") else 0
         grammar_hit = 1 if subgraph.get("grammar_hit") else 0
-        grammar_score = chain_row.get("grammar_score", 0.0)
-        same_arity_hit = int(chain_row.get("grammar_same_arity_hit", 0))
+        grammar_score = self._safe_float(chain_row.get("grammar_score", 0.0), 0.0)
+        same_arity_hit = self._safe_int(chain_row.get("grammar_same_arity_hit", 0), 0)
         spine_size = min(len(subgraph.get("spine_edges", [])), 10000)
         expanded_size = min(len(subgraph.get("expanded_edges", [])), 10000)
         # Smaller subgraphs are preferred once support quality is comparable.
@@ -1835,6 +1851,66 @@ class KnowledgeGraphAgent:
             "answerable": bool((result.get("answer") or "").strip()),
         }
 
+    async def _correct_candidates_with_llm(
+        self,
+        user_prompt: str,
+        failed_candidates: List[Dict[str, Any]],
+        max_new_candidates: int = 5
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Optional correction step: ask LLM to revise failed chains.
+        This is still lighter than grammar-first because it happens only when needed.
+        """
+        allowed_rels_str = json.dumps(self._select_relation_prompt_candidates(user_prompt), ensure_ascii=False)
+        failed_json = json.dumps(failed_candidates, ensure_ascii=False)
+
+        developer_instruction = (
+            "You are a KG chain correction module.\n"
+            "You are given a question and several FAILED candidate chains.\n"
+            "Your task is to propose corrected alternatives.\n"
+            "Rules:\n"
+            f"  - Prefer relations from this candidate set: {allowed_rels_str}\n"
+            "  - If needed, you may use another KG relation token only when clearly more accurate.\n"
+            "  - You may change relation direction using ^-1.\n"
+            "  - You may replace the chain with a better one if needed.\n"
+            "  - Prefer same hop count as the question requires.\n"
+            "Return ONLY a valid JSON array with corrected candidates.\n"
+            "Format:\n"
+            '[{"entity": "<topic entity>", "chain": ["<rel1>", "<rel2>", ...]}, ...]'
+        )
+        user_content = f"Question: {user_prompt}\nFailed candidates: {failed_json}"
+
+        input_tokens = self._estimate_tokens(developer_instruction, user_content)
+        raw = await self._inference(developer_instruction, user_content)
+        clean = self._extract_final_content(raw)
+        total_tokens = input_tokens + self._estimate_tokens(clean)
+
+        try:
+            arr = json.loads(clean)
+            if not isinstance(arr, list):
+                return [], total_tokens
+        except Exception:
+            return [], total_tokens
+
+        repaired = []
+        for item in arr[:max_new_candidates]:
+            if not isinstance(item, dict):
+                continue
+            entity = str(item.get("entity", "")).strip()
+            chain = item.get("chain", [])
+            if not entity or not isinstance(chain, list):
+                continue
+            chain = [str(x).strip() for x in chain if str(x).strip()]
+            if not chain:
+                continue
+            repaired.append({
+                "entity": entity,
+                "chain": chain,
+                "source": "llm_correction",
+                "confidence": max(0.0, min(1.0, self._safe_float(item.get("confidence", 0.0), 0.0))),
+            })
+        return repaired, total_tokens
+
 
 # ============================================================
 # Debug Entry Point
@@ -1880,58 +1956,3 @@ if __name__ == "__main__":
         print(f"hit_grammar_count     = {agent.hit_grammar_count}")
 
     asyncio.run(run_test())
-    async def _correct_candidates_with_llm(
-        self,
-        user_prompt: str,
-        failed_candidates: List[Dict[str, Any]],
-        max_new_candidates: int = 5
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        """
-        Optional correction step: ask LLM to revise failed chains.
-        This is still lighter than grammar-first because it happens only when needed.
-        """
-        allowed_rels_str = json.dumps(self._select_relation_prompt_candidates(user_prompt), ensure_ascii=False)
-        failed_json = json.dumps(failed_candidates, ensure_ascii=False)
-
-        developer_instruction = (
-            "You are a KG chain correction module.\n"
-            "You are given a question and several FAILED candidate chains.\n"
-            "Your task is to propose corrected alternatives.\n"
-            "Rules:\n"
-            f"  - Prefer relations from this candidate set: {allowed_rels_str}\n"
-            "  - If needed, you may use another KG relation token only when clearly more accurate.\n"
-            "  - You may change relation direction using ^-1.\n"
-            "  - You may replace the chain with a better one if needed.\n"
-            "  - Prefer same hop count as the question requires.\n"
-            "Return ONLY a valid JSON array with corrected candidates.\n"
-            "Format:\n"
-            '[{"entity": "<topic entity>", "chain": ["<rel1>", "<rel2>", ...]}, ...]'
-        )
-        user_content = f"Question: {user_prompt}\nFailed candidates: {failed_json}"
-
-        input_tokens = self._estimate_tokens(developer_instruction, user_content)
-        raw = await self._inference(developer_instruction, user_content)
-        clean = self._extract_final_content(raw)
-        total_tokens = input_tokens + self._estimate_tokens(clean)
-
-        raw_candidates = self._extract_candidate_json_list(clean)
-        candidates = []
-        for item in raw_candidates[:max_new_candidates]:
-            entity = self._normalize_entity_from_question(user_prompt, item.get("entity"))
-            raw_chain = item.get("chain", [])
-            chain = []
-            for c in raw_chain:
-                if not isinstance(c, str):
-                    continue
-                matched = self._fuzzy_match_relation(c)
-                if matched:
-                    chain.append(matched)
-            if entity and chain:
-                candidates.append({"entity": entity, "chain": chain, "source": "llm_correction"})
-
-        candidates = self._dedup_candidates(candidates)
-        return candidates, total_tokens
-
-    # ============================================================
-    # Serialization / Answer Generation
-    # ============================================================

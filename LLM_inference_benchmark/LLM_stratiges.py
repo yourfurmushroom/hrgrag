@@ -9,8 +9,21 @@ from transformers import AutoTokenizer
 class LLMStrategy(ABC):
     def __init__(self, model):
         self.model = model
+        self._normalize_generation_token_ids()
+
+    def _first_token_id(self, value):
+        if isinstance(value, list):
+            return value[0] if value else None
+        return value
+
+    def _normalize_generation_token_ids(self):
+        eos_id = self._first_token_id(getattr(self.model.config, "eos_token_id", None))
+        if isinstance(getattr(self.model.config, "eos_token_id", None), list):
+            self.model.config.eos_token_id = eos_id
         if self.model.config.pad_token_id is None:
-            self.model.config.pad_token_id = self.model.config.eos_token_id
+            self.model.config.pad_token_id = eos_id
+        else:
+            self.model.config.pad_token_id = self._first_token_id(self.model.config.pad_token_id)
 
     def _input_device(self):
         """Use the embedding/input device for dispatched HF models."""
@@ -99,8 +112,13 @@ class GenericHFStrategy(LLMStrategy):
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path, use_fast=True)
 
         # 有些 tokenizer 沒有 pad_token
-        if self.tokenizer.pad_token_id is None and self.tokenizer.eos_token_id is not None:
-            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+        tokenizer_eos_id = self._first_token_id(self.tokenizer.eos_token_id)
+        if isinstance(self.tokenizer.eos_token_id, list):
+            self.tokenizer.eos_token_id = tokenizer_eos_id
+        if self.tokenizer.pad_token_id is None and tokenizer_eos_id is not None:
+            self.tokenizer.pad_token_id = tokenizer_eos_id
+        elif self.tokenizer.pad_token_id is not None:
+            self.tokenizer.pad_token_id = self._first_token_id(self.tokenizer.pad_token_id)
 
     async def inference(self, developer_instruction: str, user_content: str) -> str:
         messages = [
