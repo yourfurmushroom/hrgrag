@@ -27,6 +27,8 @@ if [[ "${PORTABLE_NO_VENV:-0}" == "1" ]]; then
   if [[ -n "${TORCH_INSTALL_CMD:-}" ]]; then
     echo "[setup] Running custom torch install command"
     eval "$TORCH_INSTALL_CMD"
+  else
+    "$python_cmd" -m pip install torch --index-url https://download.pytorch.org/whl/cu124
   fi
 
   "$python_cmd" -m pip install -r "$ROOT_DIR/requirements.txt"
@@ -44,7 +46,7 @@ if [[ -n "${TORCH_INSTALL_CMD:-}" ]]; then
   echo "[setup] Running custom torch install command"
   eval "$TORCH_INSTALL_CMD"
 else
-  python -m pip install torch
+  python -m pip install torch --index-url https://download.pytorch.org/whl/cu124
 fi
 
 python -m pip install -r "$ROOT_DIR/requirements.txt"

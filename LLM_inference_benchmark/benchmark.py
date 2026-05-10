@@ -43,6 +43,10 @@ HOP_TO_DEPTH = {"1-hop": 1, "2-hop": 2, "3-hop": 3}
 
 MODEL_BACKBONES = [
     {
+        "tag": "gpt-oss",
+        "model_id": "openai/gpt-oss-20b",
+    },
+    {
         "tag": "Qwen3.5",
         "model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",
     },

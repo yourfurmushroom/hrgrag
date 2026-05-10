@@ -1,3 +1,5 @@
+# PyTorch is installed by setup_env.sh so the CUDA build can be selected there.
+setuptools<82
 transformers>=4.44
 accelerate>=0.33
 nltk>=3.9
