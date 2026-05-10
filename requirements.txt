@@ -1,0 +1,12 @@
+transformers>=4.44
+accelerate>=0.33
+nltk>=3.9
+pandas>=2.2
+tqdm>=4.66
+networkx>=3.3
+sentencepiece>=0.2
+safetensors>=0.4
+openai-harmony
+datasets>=2.20
+gdown>=5.2
+huggingface_hub>=0.24

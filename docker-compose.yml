@@ -1,0 +1,26 @@
+services:
+  benchmark:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app
+    environment:
+      DATASET: "${DATASET:-all}"
+      DATASETS: "${DATASETS:-}"
+      PYTHON_BIN: python3
+      PORTABLE_NO_VENV: "1"
+      HF_HOME: /app/.cache/huggingface
+      TRANSFORMERS_CACHE: /app/.cache/huggingface/transformers
+      NLTK_DATA: /app/.cache/nltk
+      HUGGING_FACE_HUB_TOKEN: "${HUGGING_FACE_HUB_TOKEN:-}"
+      TORCH_INSTALL_CMD: "${TORCH_INSTALL_CMD:-}"
+      MODEL_FILTER: "${MODEL_FILTER:-}"
+    volumes:
+      - ./Datasets:/app/Datasets
+      - ./artifacts:/app/artifacts
+      - ./configs:/app/configs
+      - ./KBs:/app/KBs
+      - ./.cache:/app/.cache
+    gpus: all
+    stdin_open: true
+    tty: true
