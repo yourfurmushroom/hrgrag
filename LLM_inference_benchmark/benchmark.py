@@ -67,10 +67,6 @@ def paired_serialization_specs(
 # 格式：(顯示名稱, Agent類, 初始化參數, 是_baseline)
 # ==========================================
 MODEL_SPECS = [
-
-    # ============================================================
-    # [1] Baseline-BFS（KAG，oracle hop depth，benchmark 會傳入正確 hop 數）
-    # ============================================================
     ("Baseline-BFS-llama3.1", BaselineAgent, {
         "model_id": "meta-llama/Llama-3.1-8B-Instruct",
         "bfs_depth": 3,
@@ -80,34 +76,124 @@ MODEL_SPECS = [
         "bfs_depth": 3,
     }, True),
 
-    # ============================================================
-    # [2] Baseline-BFS-fixed（真正 general：固定 depth=2，不依賴 oracle hop 數）
-    #     is_baseline=False → benchmark 不傳 hop_override → 全部用 bfs_depth=2
-    #     用於驗證：沒有 hop oracle 的情況下 BFS 有多差
-    # ============================================================
-    ("Baseline-BFS-fixed2-llama3.1", BaselineAgent, {
-        "model_id": "meta-llama/Llama-3.1-8B-Instruct",
-        "bfs_depth": 2,
-    }, False),
-    ("Baseline-BFS-fixed2-qwen2.5", BaselineAgent, {
-        "model_id": "Qwen/Qwen2.5-7B-Instruct",
-        "bfs_depth": 2,
-    }, False),
+    # Core four-quadrant ablation: isolate correction vs. expansion.
+    *paired_serialization_specs(
+        base_name="Spine-Only-llama3.1",
+        model_id="meta-llama/Llama-3.1-8B-Instruct",
+        shared_group="Spine-Only-llama3.1",
+        base_kwargs={
+            "use_grammar_rerank": False,
+            "use_grammar_expansion": False,
+            "use_fallback_correction": False,
+            "use_grammar_hint": False,
+            "grammar_path": None,
+        },
+    ),
+    *paired_serialization_specs(
+        base_name="Spine-Only-qwen2.5",
+        model_id="Qwen/Qwen2.5-7B-Instruct",
+        shared_group="Spine-Only-qwen2.5",
+        base_kwargs={
+            "use_grammar_rerank": False,
+            "use_grammar_expansion": False,
+            "use_fallback_correction": False,
+            "use_grammar_hint": False,
+            "grammar_path": None,
+        },
+    ),
 
-    # ============================================================
-    # [3] HRG (Proposed Framework)：Chain-first retrieval with HRG-constrained context
-    #     主要方法：LLM 產生路徑 -> correction 修正失敗 chain -> 先抓 strict spine
-    #     -> 再用符合 chain 的 HRG rule 對 spine 做小範圍 constrained expansion。
-    #     HRG 在這裡是 retrieval constraint / structural prior，而不是主導 chain 修正。
-    # ============================================================
+    *paired_serialization_specs(
+        base_name="Spine-Correction-llama3.1",
+        model_id="meta-llama/Llama-3.1-8B-Instruct",
+        shared_group="Spine-Correction-llama3.1",
+        base_kwargs={
+            "use_grammar_rerank": False,
+            "use_grammar_expansion": False,
+            "use_fallback_correction": True,
+            "use_grammar_hint": False,
+            "grammar_path": None,
+        },
+    ),
+    *paired_serialization_specs(
+        base_name="Spine-Correction-qwen2.5",
+        model_id="Qwen/Qwen2.5-7B-Instruct",
+        shared_group="Spine-Correction-qwen2.5",
+        base_kwargs={
+            "use_grammar_rerank": False,
+            "use_grammar_expansion": False,
+            "use_fallback_correction": True,
+            "use_grammar_hint": False,
+            "grammar_path": None,
+        },
+    ),
+
+    *paired_serialization_specs(
+        base_name="Spine-GrammarExpansion-llama3.1",
+        model_id="meta-llama/Llama-3.1-8B-Instruct",
+        shared_group="Spine-GrammarExpansion-llama3.1",
+        base_kwargs={
+            "use_grammar_rerank": False,
+            "use_grammar_expansion": True,
+            "use_fallback_correction": False,
+            "use_grammar_hint": False,
+            "expansion_strict": True,
+            "expansion_min_prob": 0.005,
+            "expansion_per_node_cap": 5,
+        },
+    ),
+    *paired_serialization_specs(
+        base_name="Spine-GrammarExpansion-qwen2.5",
+        model_id="Qwen/Qwen2.5-7B-Instruct",
+        shared_group="Spine-GrammarExpansion-qwen2.5",
+        base_kwargs={
+            "use_grammar_rerank": False,
+            "use_grammar_expansion": True,
+            "use_fallback_correction": False,
+            "use_grammar_hint": False,
+            "expansion_strict": True,
+            "expansion_min_prob": 0.005,
+            "expansion_per_node_cap": 5,
+        },
+    ),
+
+    *paired_serialization_specs(
+        base_name="Spine-RandomExpansion-llama3.1",
+        model_id="meta-llama/Llama-3.1-8B-Instruct",
+        shared_group="Spine-RandomExpansion-llama3.1",
+        base_kwargs={
+            "use_grammar_rerank": False,
+            "use_grammar_expansion": False,
+            "use_random_expansion": True,
+            "use_fallback_correction": False,
+            "use_grammar_hint": False,
+            "expansion_per_node_cap": 5,
+            "grammar_path": None,
+        },
+    ),
+    *paired_serialization_specs(
+        base_name="Spine-RandomExpansion-qwen2.5",
+        model_id="Qwen/Qwen2.5-7B-Instruct",
+        shared_group="Spine-RandomExpansion-qwen2.5",
+        base_kwargs={
+            "use_grammar_rerank": False,
+            "use_grammar_expansion": False,
+            "use_random_expansion": True,
+            "use_fallback_correction": False,
+            "use_grammar_hint": False,
+            "expansion_per_node_cap": 5,
+            "grammar_path": None,
+        },
+    ),
+
     *paired_serialization_specs(
         base_name="HRG-Proposed-llama3.1",
         model_id="meta-llama/Llama-3.1-8B-Instruct",
         shared_group="HRG-Proposed-llama3.1",
         base_kwargs={
-            "use_grammar_expansion": True,
             "use_grammar_rerank": False,
+            "use_grammar_expansion": True,
             "use_fallback_correction": True,
+            "use_grammar_hint": False,
             "expansion_strict": True,
             "expansion_min_prob": 0.005,
             "expansion_per_node_cap": 5,
@@ -118,85 +204,15 @@ MODEL_SPECS = [
         model_id="Qwen/Qwen2.5-7B-Instruct",
         shared_group="HRG-Proposed-qwen2.5",
         base_kwargs={
-            "use_grammar_expansion": True,
             "use_grammar_rerank": False,
+            "use_grammar_expansion": True,
             "use_fallback_correction": True,
+            "use_grammar_hint": False,
             "expansion_strict": True,
             "expansion_min_prob": 0.005,
             "expansion_per_node_cap": 5,
         },
     ),
-
-    # ============================================================
-    # [4] Ablation Mode A：Spine-only（無 grammar，無 correction）
-    #     → 驗證 LLM chain BFS 最裸的效果
-    # ============================================================
-    ("HRG-A-spine-llama3.1", KnowledgeGraphAgent, {
-        "model_id": "meta-llama/Llama-3.1-8B-Instruct",
-        "serialization_format": "triples",
-        "use_grammar_rerank": False,
-        "use_grammar_expansion": False,
-        "use_fallback_correction": False,
-        "use_grammar_hint": False,
-    }, False),
-    ("HRG-A-spine-qwen2.5", KnowledgeGraphAgent, {
-        "model_id": "Qwen/Qwen2.5-7B-Instruct",
-        "serialization_format": "triples",
-        "use_grammar_rerank": False,
-        "use_grammar_expansion": False,
-        "use_fallback_correction": False,
-        "use_grammar_hint": False,
-    }, False),
-
-    # ============================================================
-    # [5] Ablation Mode B：Spine + Grammar Expansion（chain-adaptive）
-    #     → 驗證 grammar expansion 是否有幫助（對照舊 HRG-Full）
-    # ============================================================
-    ("HRG-B-expand-llama3.1", KnowledgeGraphAgent, {
-        "model_id": "meta-llama/Llama-3.1-8B-Instruct",
-        "serialization_format": "triples",
-        "use_grammar_rerank": True,
-        "use_grammar_expansion": True,
-        "use_fallback_correction": True,
-        "expansion_strict": True,
-        "expansion_min_prob": 0.005,
-        "expansion_per_node_cap": 10,
-    }, False),
-    ("HRG-B-expand-qwen2.5", KnowledgeGraphAgent, {
-        "model_id": "Qwen/Qwen2.5-7B-Instruct",
-        "serialization_format": "triples",
-        "use_grammar_rerank": True,
-        "use_grammar_expansion": True,
-        "use_fallback_correction": True,
-        "expansion_strict": True,
-        "expansion_min_prob": 0.005,
-        "expansion_per_node_cap": 10,
-    }, False),
-
-    # ============================================================
-    # [6] Ablation Mode C：No-HRG（LLM chain BFS + correction，完全不用 grammar）
-    #     → 與 HRG-Spine 對比，量化 grammar rerank 的貢獻
-    # ============================================================
-    ("HRG-C-no-hrg-llama3.1", KnowledgeGraphAgent, {
-        "model_id": "meta-llama/Llama-3.1-8B-Instruct",
-        "serialization_format": "triples",
-        "use_grammar_rerank": False,
-        "use_grammar_expansion": False,
-        "use_fallback_correction": True,
-        "use_grammar_hint": False,
-        "grammar_path": None,
-    }, False),
-    ("HRG-C-no-hrg-qwen2.5", KnowledgeGraphAgent, {
-        "model_id": "Qwen/Qwen2.5-7B-Instruct",
-        "serialization_format": "triples",
-        "use_grammar_rerank": False,
-        "use_grammar_expansion": False,
-        "use_fallback_correction": True,
-        "use_grammar_hint": False,
-        "grammar_path": None,
-    }, False),
-
-
 ]
 
 
@@ -339,7 +355,7 @@ def build_dataset_splits(args):
 
     if args.dataset == "wikimovies":
         root = args.dataset_root or DEFAULT_WIKIMOVIES_ROOT
-        split = args.split or "train"
+        split = args.split or "test"
         subset = args.wikimovies_subset
         dataset_file = args.dataset_file or os.path.join(root, "movieqa", "questions", subset, f"{subset.replace('_', '-')}_qa_{split}.txt")
         grouped = load_wikimovies_dataset(dataset_file)
@@ -357,7 +373,12 @@ def build_dataset_splits(args):
             "mintaka": DEFAULT_MINTAKA_ROOT,
         }
         root = args.dataset_root or root_map[args.dataset]
-        split = args.split or "test"
+        if args.split:
+            split = args.split
+        elif args.dataset == "kqapro":
+            split = "validation"
+        else:
+            split = "test"
         dataset_file = args.dataset_file or os.path.join(root, "normalized", f"{split}.jsonl")
         grouped = load_normalized_jsonl_dataset(dataset_file, default_hop=args.custom_hop)
         hop_overrides = {name: HOP_TO_DEPTH.get(name, get_hop(name)) for name in grouped}
@@ -398,7 +419,7 @@ def split_candidate_answers(text: str):
     if not raw:
         return []
 
-    parts = re.split(r"\s*\|\s*|\s*,\s*|\s*;\s*|\n+", raw)
+    parts = re.split(r"\s*\|\s*|\s*;\s*|\n+", raw)
     normalized = []
     seen = set()
     for part in parts:
@@ -415,6 +436,8 @@ def calculate_metrics(references, candidate):
     candidate_norm = normalize_answer(candidate)
     ref_norms = [normalize_answer(ref) for ref in references if normalize_answer(ref)]
     candidate_parts = split_candidate_answers(candidate)
+    candidate_set = set(candidate_parts)
+    ref_set = set(ref_norms)
 
     contains_hit = 0.0
     for ref in references:
@@ -422,15 +445,29 @@ def calculate_metrics(references, candidate):
             contains_hit = 1.0
             break
 
-    # Acc now means normalized answer correctness:
-    # - single-answer questions: exact normalized match
-    # - multi-answer questions: exact set match after simple list splitting
+    hit_at_1_any = 0.0
+    if ref_set:
+        if candidate_set:
+            hit_at_1_any = 1.0 if bool(candidate_set & ref_set) else 0.0
+        elif candidate_norm:
+            hit_at_1_any = 1.0 if candidate_norm in ref_set else 0.0
+
+    overlap = len(candidate_set & ref_set)
     if len(ref_norms) <= 1:
         acc = 1.0 if ref_norms and candidate_norm and candidate_norm == ref_norms[0] else 0.0
     else:
-        acc = 1.0 if candidate_parts and set(candidate_parts) == set(ref_norms) else 0.0
+        acc = (overlap / len(ref_set)) if ref_set else 0.0
 
-    exact_match = acc
+    exact_match = 1.0 if ref_set and candidate_set == ref_set else 0.0
+    if len(ref_norms) <= 1:
+        exact_match = acc
+
+    answer_set_precision = (overlap / len(candidate_set)) if candidate_set else 0.0
+    answer_set_recall = (overlap / len(ref_set)) if ref_set else 0.0
+    if answer_set_precision + answer_set_recall > 0:
+        answer_set_f1 = 2 * answer_set_precision * answer_set_recall / (answer_set_precision + answer_set_recall)
+    else:
+        answer_set_f1 = 0.0
 
     try:
         cand_tokens = nltk.word_tokenize(candidate_lower)
@@ -443,7 +480,16 @@ def calculate_metrics(references, candidate):
     except Exception:
         bleu = 0.0
 
-    return bleu, acc, exact_match, contains_hit
+    return {
+        "bleu": float(bleu),
+        "answer_recall": float(acc),
+        "em": float(exact_match),
+        "contains_hit": float(contains_hit),
+        "hit_at_1_any": float(hit_at_1_any),
+        "answer_set_precision": float(answer_set_precision),
+        "answer_set_recall": float(answer_set_recall),
+        "answer_set_f1": float(answer_set_f1),
+    }
 
 
 def get_hop(dataset_name: str) -> int:
@@ -556,7 +602,7 @@ async def async_evaluate_question(
                 )
 
             elapsed = time.time() - start_time
-            bleu, acc, em, contains_hit = calculate_metrics(references, response)
+            metrics = calculate_metrics(references, response)
             pbar.update(1)
 
             return {
@@ -564,10 +610,7 @@ async def async_evaluate_question(
                 "question": question,
                 "expected_outputs": "|".join(references),
                 "model_output": response,
-                "bleu": float(bleu),
-                "acc": float(acc),
-                "em": float(em),
-                "contains_hit": float(contains_hit),
+                **metrics,
                 "elapsed": float(elapsed),
                 "failure_stage": (details or {}).get("failure_stage", "ok"),
                 "parse_latency": float((details or {}).get("parse_latency", 0.0) or 0.0),
@@ -588,9 +631,13 @@ async def async_evaluate_question(
                 "expected_outputs": "|".join(references),
                 "model_output": "",
                 "bleu": 0.0,
-                "acc": 0.0,
+                "answer_recall": 0.0,
                 "em": 0.0,
                 "contains_hit": 0.0,
+                "hit_at_1_any": 0.0,
+                "answer_set_precision": 0.0,
+                "answer_set_recall": 0.0,
+                "answer_set_f1": 0.0,
                 "elapsed": 0.0,
                 "error": err_str,
                 "failure_stage": failure_stage,
@@ -689,9 +736,13 @@ async def evaluate_single_model(
             })
 
         total_bleu = sum(r["bleu"] for r in results)
-        total_acc = sum(r["acc"] for r in results)
+        total_answer_recall = sum(r["answer_recall"] for r in results)
         total_em = sum(r["em"] for r in results)
         total_contains_hit = sum(r["contains_hit"] for r in results)
+        total_hit_at_1_any = sum(r["hit_at_1_any"] for r in results)
+        total_answer_set_precision = sum(r["answer_set_precision"] for r in results)
+        total_answer_set_recall = sum(r["answer_set_recall"] for r in results)
+        total_answer_set_f1 = sum(r["answer_set_f1"] for r in results)
         total_time = sum(r["elapsed"] for r in results)
         count = len(results)
 
@@ -705,22 +756,31 @@ async def evaluate_single_model(
             total_generation_latency += r.get("generation_latency", 0.0)
 
         avg_bleu = total_bleu / count if count > 0 else 0
-        avg_acc = total_acc / count if count > 0 else 0
+        avg_answer_recall = total_answer_recall / count if count > 0 else 0
         avg_em = total_em / count if count > 0 else 0
         avg_contains_hit = total_contains_hit / count if count > 0 else 0
+        avg_hit_at_1_any = total_hit_at_1_any / count if count > 0 else 0
+        avg_answer_set_precision = total_answer_set_precision / count if count > 0 else 0
+        avg_answer_set_recall = total_answer_set_recall / count if count > 0 else 0
+        avg_answer_set_f1 = total_answer_set_f1 / count if count > 0 else 0
         avg_time = total_time / count if count > 0 else 0
 
         model_results[dataset_name] = {
             "bleu": round(avg_bleu, 4),
-            "acc": round(avg_acc, 4),
+            "answer_recall": round(avg_answer_recall, 4),
             "em": round(avg_em, 4),
             "contains_hit": round(avg_contains_hit, 4),
+            "hit_at_1_any": round(avg_hit_at_1_any, 4),
+            "answer_set_precision": round(avg_answer_set_precision, 4),
+            "answer_set_recall": round(avg_answer_set_recall, 4),
+            "answer_set_f1": round(avg_answer_set_f1, 4),
             "avg_latency": round(avg_time, 2),
         }
 
         tqdm.write(
             f"  ✅ [{dataset_name}] BLEU: {avg_bleu:.4f} | "
-            f"Acc: {avg_acc:.4f} | ContainsHit: {avg_contains_hit:.4f} | Avg Time: {avg_time:.2f}s"
+            f"AnsRecall: {avg_answer_recall:.4f} | EM: {avg_em:.4f} | "
+            f"AnsF1: {avg_answer_set_f1:.4f} | Avg Time: {avg_time:.2f}s"
         )
 
     # ==========================================
@@ -915,9 +975,13 @@ async def main():
         def dataset_metric_line(metric_key: str) -> str:
             return " | ".join(f"{v(res.get(label, {}), metric_key):<12}" for label in dataset_labels)
 
-        print(f"{model_name:<30} | {'BLEU':<26} | {dataset_metric_line('bleu')}")
-        print(f"{'':30} | {'Acc':<26} | {dataset_metric_line('acc')}")
-        print(f"{'':30} | {'Contains-Hit':<26} | {dataset_metric_line('contains_hit')}")
+        print(f"{model_name:<30} | {'EM':<26} | {dataset_metric_line('em')}")
+        print(f"{'':30} | {'Answer-Set F1':<26} | {dataset_metric_line('answer_set_f1')}")
+        print(f"{'':30} | {'Answer Recall':<26} | {dataset_metric_line('answer_recall')}")
+        print(f"{'':30} | {'Hit@1-any':<26} | {dataset_metric_line('hit_at_1_any')}")
+        print(f"{'':30} | {'Answer-Set Precision':<26} | {dataset_metric_line('answer_set_precision')}")
+        print(f"{'':30} | {'Answer-Set Recall':<26} | {dataset_metric_line('answer_set_recall')}")
+        print(f"{'':30} | {'BLEU':<26} | {dataset_metric_line('bleu')}")
         print(f"{'':30} | {'Avg Latency (s)':<26} | {dataset_metric_line('avg_latency')}")
 
         if isinstance(data, dict) and "avg_retrieval_recall" in data:

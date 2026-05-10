@@ -4,6 +4,8 @@ import json
 import re
 import pickle
 import time
+import random
+import hashlib
 from collections import defaultdict
 from typing import Tuple, List, Optional, Dict, Any, Set
 
@@ -130,6 +132,8 @@ class KnowledgeGraphAgent:
         expansion_strict: bool = False,
         expansion_min_prob: float = 0.005,   # min rule probability/count to use
         expansion_per_node_cap: int = 10,    # max expansion edges added per node
+        use_random_expansion: bool = False,
+        random_expansion_seed: int = 0,
         # ---- Ablation D: context top-K edge truncation ----
         top_k_edges: Optional[int] = None,
         # ---- HRG-D: grammar-guided constrained BFS retrieval (original design) ----
@@ -155,6 +159,8 @@ class KnowledgeGraphAgent:
         self.expansion_strict = expansion_strict
         self.expansion_min_prob = expansion_min_prob
         self.expansion_per_node_cap = expansion_per_node_cap
+        self.use_random_expansion = use_random_expansion
+        self.random_expansion_seed = random_expansion_seed
         self.top_k_edges = top_k_edges
         self.use_grammar_guided_retrieval = use_grammar_guided_retrieval
 
@@ -925,6 +931,70 @@ class KnowledgeGraphAgent:
             expanded_edges = expanded_edges[: self.max_frontier]
         return expanded_edges
 
+    def _expand_subgraph_random(
+        self,
+        spine_edges: List[Dict[str, Any]],
+        chain: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        spine_nodes = set()
+        for e in spine_edges:
+            spine_nodes.add(e["head"])
+            spine_nodes.add(e["tail"])
+
+        if not spine_nodes:
+            return []
+
+        chain_key = " | ".join(chain or [])
+        seed_text = f"{self.random_expansion_seed}::{chain_key}::{sorted(spine_nodes)}"
+        seed_int = int(hashlib.md5(seed_text.encode("utf-8")).hexdigest()[:8], 16)
+        rng = random.Random(seed_int)
+
+        expanded_edges = []
+        visited = set((e["head"], e["relation"], e["tail"]) for e in spine_edges)
+
+        for ent in sorted(spine_nodes):
+            sanitized_ent = self._resolve_entity_to_kb(ent)
+            if not sanitized_ent:
+                continue
+
+            candidate_edges = []
+            for rel, tails in self.kb_out.get(sanitized_ent, {}).items():
+                for t in tails:
+                    edge = {
+                        "head": ent,
+                        "relation": rel,
+                        "tail": self._display_entity(t),
+                        "count": 1,
+                    }
+                    edge_tuple = (edge["head"], edge["relation"], edge["tail"])
+                    if edge_tuple not in visited:
+                        candidate_edges.append((edge_tuple, edge))
+
+            for rel, heads in self.kb_in.get(sanitized_ent, {}).items():
+                for h in heads:
+                    edge = {
+                        "head": self._display_entity(h),
+                        "relation": rel,
+                        "tail": ent,
+                        "count": 1,
+                    }
+                    edge_tuple = (edge["head"], edge["relation"], edge["tail"])
+                    if edge_tuple not in visited:
+                        candidate_edges.append((edge_tuple, edge))
+
+            if not candidate_edges:
+                continue
+
+            rng.shuffle(candidate_edges)
+            selected = candidate_edges[: self.expansion_per_node_cap]
+            for edge_tuple, edge in selected:
+                visited.add(edge_tuple)
+                expanded_edges.append(edge)
+
+        if len(expanded_edges) > self.max_frontier:
+            expanded_edges = expanded_edges[: self.max_frontier]
+        return expanded_edges
+
     def _make_direction_flip_candidates(self, entity: str, chain: List[str]) -> List[Dict[str, Any]]:
         """
         Generate candidates by flipping one relation direction at a time.
@@ -1128,6 +1198,8 @@ class KnowledgeGraphAgent:
             matched_rules = selected_rules
             if matched_rules:
                 expanded_edges = self._expand_subgraph_by_grammar(spine_edges, matched_rules, chain=chain)
+        elif self.use_random_expansion and not is_single_hop:
+            expanded_edges = self._expand_subgraph_random(spine_edges, chain=chain)
         elif is_single_hop:
             matched_rules = selected_rules
 

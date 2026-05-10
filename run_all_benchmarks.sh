@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_DATASETS=(metaqa wikimovies mlpq wqsp cwq kqapro mintaka)
+DEFAULT_DATASETS=(metaqa wikimovies mlpq kqapro)
 ARTIFACTS_ROOT="${ARTIFACTS_ROOT:-$ROOT_DIR/artifacts}"
 SUMMARY_DIR="$ARTIFACTS_ROOT/_batch"
 SUMMARY_FILE="$SUMMARY_DIR/run_all_summary.txt"

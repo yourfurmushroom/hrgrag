@@ -46,7 +46,13 @@ RESOLVE_JSON="$("$PYTHON_BIN" "$ROOT_DIR/resolve_kb.py" "${RESOLVE_ARGS[@]}" || 
 KB_PATH="$("$PYTHON_BIN" -c 'import json,sys; print(json.loads(sys.argv[1]).get("kb_path",""))' "$RESOLVE_JSON")"
 
 if [[ -z "$KB_PATH" ]]; then
-  fail "could not auto-resolve KB for dataset=$DATASET. Put a usable KB/triples file under portable_runner/KBs or set KB_PATH manually in $CONFIG_PATH"
+  if [[ "$DATASET" =~ ^(wqsp|cwq|mintaka)$ ]]; then
+    fail "dataset=$DATASET is downloaded and its dataset path is fixed, but this repo does not bundle a benchmark-ready KG for it. Put a usable KB/triples file under portable_runner/KBs and set KB_PATH manually in $CONFIG_PATH"
+  fi
+  if [[ "$DATASET" == "kqapro" ]]; then
+    fail "dataset=kqapro is downloaded, but the converted triples file was not found at portable_runner/Datasets/KQAPro/kqapro_kb_triples.tsv. Regenerate datasets or set KB_PATH manually in $CONFIG_PATH"
+  fi
+  fail "could not auto-resolve KB for dataset=$DATASET. Check that the downloaded dataset layout matches the expected paths, or set KB_PATH manually in $CONFIG_PATH"
 fi
 
 TMP_CONFIG="$ROOT_DIR/configs/.autogen.${CONFIG_NAME}.env"

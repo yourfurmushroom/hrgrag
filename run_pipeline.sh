@@ -17,7 +17,13 @@ else
 fi
 
 DATASET="${DATASET:-custom}"
-SPLIT="${SPLIT:-test}"
+if [[ -n "${SPLIT:-}" ]]; then
+  SPLIT="$SPLIT"
+elif [[ "$DATASET" == "kqapro" ]]; then
+  SPLIT="validation"
+else
+  SPLIT="test"
+fi
 RUN_GRAMMAR="${RUN_GRAMMAR:-1}"
 SAMPLE_LIMIT="${SAMPLE_LIMIT:-100}"
 MODEL_FILTER="${MODEL_FILTER:-}"
@@ -29,6 +35,15 @@ MLPQ_FUSION="${MLPQ_FUSION:-ills}"
 CUSTOM_DATASET_NAME="${CUSTOM_DATASET_NAME:-custom}"
 CUSTOM_FORMAT="${CUSTOM_FORMAT:-auto}"
 CUSTOM_HOP="${CUSTOM_HOP:-1}"
+
+DATASETS_DIR="$ROOT_DIR/Datasets"
+DEFAULT_METAQA_ROOT="$DATASETS_DIR/MetaQA"
+DEFAULT_WIKIMOVIES_ROOT="$DATASETS_DIR/WikiMovies"
+DEFAULT_MLPQ_ROOT="$DATASETS_DIR/MLPQ"
+DEFAULT_WQSP_ROOT="$DATASETS_DIR/WQSP"
+DEFAULT_CWQ_ROOT="$DATASETS_DIR/CWQ"
+DEFAULT_KQAPRO_ROOT="$DATASETS_DIR/KQAPro"
+DEFAULT_MINTAKA_ROOT="$DATASETS_DIR/Mintaka"
 
 fail() {
   echo "[error] $*" >&2
@@ -73,6 +88,27 @@ GRAMMAR_OUT_DIR="$RUN_ARTIFACT_DIR/grammar"
 GRAMMAR_PATH="${GRAMMAR_PATH:-$GRAMMAR_OUT_DIR/hrg_grammar.json}"
 OUTPUT_FILE="${OUTPUT_FILE:-$RUN_ARTIFACT_DIR/results/benchmark_results.json}"
 DETAIL_CSV="${DETAIL_CSV:-$RUN_ARTIFACT_DIR/results/all_models_outputs_wide.csv}"
+
+if [[ -z "${DATASET_ROOT:-}" ]]; then
+  case "$DATASET" in
+    metaqa) DATASET_ROOT="$DEFAULT_METAQA_ROOT" ;;
+    wikimovies) DATASET_ROOT="$DEFAULT_WIKIMOVIES_ROOT" ;;
+    mlpq) DATASET_ROOT="$DEFAULT_MLPQ_ROOT" ;;
+    wqsp) DATASET_ROOT="$DEFAULT_WQSP_ROOT" ;;
+    cwq) DATASET_ROOT="$DEFAULT_CWQ_ROOT" ;;
+    kqapro) DATASET_ROOT="$DEFAULT_KQAPRO_ROOT" ;;
+    mintaka) DATASET_ROOT="$DEFAULT_MINTAKA_ROOT" ;;
+  esac
+fi
+
+if [[ -z "${KB_PATH:-}" ]]; then
+  case "$DATASET" in
+    metaqa) KB_PATH="$DEFAULT_METAQA_ROOT/kb.txt" ;;
+    wikimovies) KB_PATH="$DEFAULT_WIKIMOVIES_ROOT/movieqa/knowledge_source/wiki_entities/wiki_entities_kb.txt" ;;
+    mlpq) KB_PATH="$DEFAULT_MLPQ_ROOT/datasets/KGs/fusion_bilingual_KGs/ILLs_fusion/merged_ILLs_KG_en_zh.txt" ;;
+    kqapro) KB_PATH="$DEFAULT_KQAPRO_ROOT/kqapro_kb_triples.tsv" ;;
+  esac
+fi
 
 require_file "${KB_PATH:-}" "KB_PATH"
 
@@ -129,12 +165,11 @@ case "$DATASET" in
       BENCHMARK_ARGS+=(--dataset-root "$DATASET_ROOT")
     fi
     if [[ -z "${DATASET_FILE:-}" ]]; then
-      DATASET_FILE="$ROOT_DIR/Datasets/$(tr '[:lower:]' '[:upper:]' <<< "${DATASET:0:1}")${DATASET:1}/normalized/${SPLIT}.jsonl"
       case "$DATASET" in
-        wqsp) DATASET_FILE="$ROOT_DIR/Datasets/WQSP/normalized/${SPLIT}.jsonl" ;;
-        cwq) DATASET_FILE="$ROOT_DIR/Datasets/CWQ/normalized/${SPLIT}.jsonl" ;;
-        kqapro) DATASET_FILE="$ROOT_DIR/Datasets/KQAPro/normalized/${SPLIT}.jsonl" ;;
-        mintaka) DATASET_FILE="$ROOT_DIR/Datasets/Mintaka/normalized/${SPLIT}.jsonl" ;;
+        wqsp) DATASET_FILE="$DEFAULT_WQSP_ROOT/normalized/${SPLIT}.jsonl" ;;
+        cwq) DATASET_FILE="$DEFAULT_CWQ_ROOT/normalized/${SPLIT}.jsonl" ;;
+        kqapro) DATASET_FILE="$DEFAULT_KQAPRO_ROOT/normalized/${SPLIT}.jsonl" ;;
+        mintaka) DATASET_FILE="$DEFAULT_MINTAKA_ROOT/normalized/${SPLIT}.jsonl" ;;
       esac
     fi
     require_file "$DATASET_FILE" "DATASET_FILE"

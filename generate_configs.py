@@ -9,6 +9,8 @@ from typing import Dict, List, Tuple
 ROOT_DIR = Path(__file__).resolve().parent
 DATASETS_DIR = ROOT_DIR / "Datasets"
 CONFIGS_DIR = ROOT_DIR / "configs"
+UNSUPPORTED_KB_PLACEHOLDER = "# requires external benchmark-ready KB/triples file"
+UNSUPPORTED_KB_JSON_PLACEHOLDER = "# bundled kb.json is not compatible with the current line-based triple loader"
 
 
 def parse_args() -> argparse.Namespace:
@@ -46,7 +48,7 @@ def infer_jobs(datasets_dir: Path) -> List[Dict[str, str]]:
             {
                 "name": "wikimovies",
                 "dataset": "wikimovies",
-                "split": "train",
+                "split": "test",
                 "dataset_root": str(wikimovies_root),
                 "kb_path": str(wikimovies_root / "movieqa" / "knowledge_source" / "wiki_entities" / "wiki_entities_kb.txt"),
                 "relation_path": "",
@@ -73,13 +75,17 @@ def infer_jobs(datasets_dir: Path) -> List[Dict[str, str]]:
     normalized_jobs: List[Tuple[str, str, str]] = [
         ("WQSP", "wqsp", "test"),
         ("CWQ", "cwq", "test"),
-        ("KQAPro", "kqapro", "test"),
+        ("KQAPro", "kqapro", "validation"),
         ("Mintaka", "mintaka", "test"),
     ]
     for dir_name, dataset_key, split in normalized_jobs:
         dataset_root = datasets_dir / dir_name
         normalized_file = dataset_root / "normalized" / f"{split}.jsonl"
         if normalized_file.exists():
+            if dataset_key == "kqapro":
+                kb_path = str(dataset_root / "kqapro_kb_triples.tsv")
+            else:
+                kb_path = UNSUPPORTED_KB_PLACEHOLDER
             jobs.append(
                 {
                     "name": dataset_key,
@@ -87,7 +93,7 @@ def infer_jobs(datasets_dir: Path) -> List[Dict[str, str]]:
                     "split": split,
                     "dataset_root": str(dataset_root),
                     "dataset_file": str(normalized_file),
-                    "kb_path": "/absolute/path/to/your/kb.txt",
+                    "kb_path": kb_path,
                     "relation_path": "",
                     "extra": "RUN_GRAMMAR=1\n",
                 }
@@ -97,9 +103,11 @@ def infer_jobs(datasets_dir: Path) -> List[Dict[str, str]]:
 
 
 def maybe_comment_missing(path_str: str) -> str:
-    path = Path(path_str)
     if not path_str:
         return ""
+    if path_str.startswith("#"):
+        return path_str
+    path = Path(path_str)
     return path_str if path.exists() else f"# missing locally: {path_str}"
 
 
@@ -135,7 +143,7 @@ def build_config_text(job: Dict[str, str]) -> str:
             "GRAMMAR_PATH=",
             "RUN_GRAMMAR=1",
             "SAMPLE_LIMIT=100",
-            "MODEL_FILTER=qwen2.5",
+            "MODEL_FILTER=",
             "OUTPUT_FILE=",
             "DETAIL_CSV=",
         ]

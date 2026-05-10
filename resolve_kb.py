@@ -9,6 +9,14 @@ from typing import Dict, List, Optional
 
 
 ROOT_DIR = Path(__file__).resolve().parent
+DATASETS_DIR = ROOT_DIR / "Datasets"
+
+FIXED_KB_PATHS: Dict[str, Path] = {
+    "metaqa": DATASETS_DIR / "MetaQA" / "kb.txt",
+    "wikimovies": DATASETS_DIR / "WikiMovies" / "movieqa" / "knowledge_source" / "wiki_entities" / "wiki_entities_kb.txt",
+    "mlpq": DATASETS_DIR / "MLPQ" / "datasets" / "KGs" / "fusion_bilingual_KGs" / "ILLs_fusion" / "merged_ILLs_KG_en_zh.txt",
+    "kqapro": DATASETS_DIR / "KQAPro" / "kqapro_kb_triples.tsv",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,23 +59,9 @@ def find_best(root: Path, patterns: List[str], suffixes: tuple[str, ...] = (".tx
 
 
 def resolve_known(dataset: str, base: Path, dataset_root: Optional[Path]) -> Optional[Path]:
-    if dataset == "metaqa":
-        root = dataset_root or (base / "Datasets" / "MetaQA")
-        return first_existing([root / "kb.txt"])
-    if dataset == "wikimovies":
-        root = dataset_root or (base / "Datasets" / "WikiMovies")
-        return first_existing([root / "movieqa" / "knowledge_source" / "wiki_entities" / "wiki_entities_kb.txt"])
-    if dataset == "mlpq":
-        root = dataset_root or (base / "Datasets" / "MLPQ")
-        return first_existing(
-            [
-                root / "datasets" / "KGs" / "fusion_bilingual_KGs" / "ILLs_fusion" / "merged_ILLs_KG_en_zh.txt",
-                root / "datasets" / "KGs" / "fusion_bilingual_KGs" / "NMN_fusion" / "merged_NMN_KG_en_zh.txt",
-            ]
-        )
-    if dataset == "kqapro":
-        root = dataset_root or (base / "Datasets" / "KQAPro")
-        return first_existing([root / "hf_snapshot" / "kb.json", root / "kb.json"])
+    if dataset in FIXED_KB_PATHS:
+        fixed = FIXED_KB_PATHS[dataset]
+        return fixed if fixed.exists() else None
     return None
 
 

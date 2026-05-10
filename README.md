@@ -34,7 +34,12 @@ bash setup_env.sh
 docker compose up --build
 ```
 
-現在預設就會依序跑全部資料集。
+現在預設會依序跑目前可直接閉環的資料集：
+
+- `metaqa`
+- `wikimovies`
+- `mlpq`
+- `kqapro`
 
 若要只跑單一資料集：
 
@@ -53,7 +58,26 @@ DATASET=all docker compose up --build
 如果只想跑一組自訂清單：
 
 ```bash
-DATASETS="metaqa wikimovies mlpq" docker compose up --build
+DATASETS="metaqa wikimovies mlpq kqapro" docker compose up --build
+```
+
+如果機器沒有 Docker，直接用本機一鍵入口：
+
+```bash
+bash run_local_all.sh
+```
+
+這會自動做環境安裝、資料集下載、config 生成，然後依序跑：
+
+- `metaqa`
+- `wikimovies`
+- `mlpq`
+- `kqapro`
+
+若只想跑指定資料集：
+
+```bash
+bash run_local_all.sh metaqa wikimovies
 ```
 
 容器會把資料與產出保留在這些 bind mounts：
