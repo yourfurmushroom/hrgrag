@@ -328,6 +328,29 @@ SEM = asyncio.Semaphore(1)
 # 2. 工具函式
 # ==========================================
 
+def save_full_report(full_report: dict, output_file: str) -> None:
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(full_report, f, indent=4, ensure_ascii=False)
+
+
+def safe_clear_gpu_cache(model_name: str) -> bool:
+    if not torch.cuda.is_available():
+        return True
+    try:
+        torch.cuda.empty_cache()
+    except RuntimeError as e:
+        print(
+            f"[Warning] GPU cache cleanup failed after {model_name}: {e}. "
+            "This usually means an earlier CUDA kernel failed asynchronously; "
+            "completed benchmark results were kept, but restarting the Python "
+            "process may be required before more CUDA work."
+        )
+        return False
+    print("[System] GPU Cache Cleared.")
+    return True
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Benchmark KGQA agents on portable KGQA datasets.")
     parser.add_argument("--dataset", choices=["metaqa", "wikimovies", "mlpq", "wqsp", "cwq", "kqapro", "mintaka", "custom"], default="metaqa")
@@ -1291,12 +1314,16 @@ async def main():
                 is_baseline=is_baseline,
             )
             full_report[run_model_name] = report
+            save_full_report(full_report, output_file)
+            print(f"[Info] 已暫存結果至 {output_file}")
 
         except Exception as e:
             print(f"[Error] 模型 {run_model_name} 執行失敗: {e}")
             import traceback
             traceback.print_exc()
             full_report[run_model_name] = "FAILED"
+            save_full_report(full_report, output_file)
+            print(f"[Info] 已暫存失敗狀態至 {output_file}")
 
         finally:
             print(f"[System] Unloading {run_model_name} to free VRAM.")
@@ -1304,9 +1331,7 @@ async def main():
                 del agent_instance
 
             gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                print("[System] GPU Cache Cleared.")
+            safe_clear_gpu_cache(run_model_name)
 
             time.sleep(5)
 
@@ -1370,9 +1395,7 @@ async def main():
 
         print(LINE)
 
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(full_report, f, indent=4, ensure_ascii=False)
+    save_full_report(full_report, output_file)
     print(f"\n[Info] 詳細報告已儲存至 {output_file}")
 
     export_wide_csv_from_long_rows(ALL_LONG_ROWS, detail_csv)

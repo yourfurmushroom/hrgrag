@@ -1,17 +1,17 @@
 # PyTorch is installed by setup_env.sh so the CUDA build can be selected there.
 setuptools<82
-transformers
-accelerate
-nltk
-pandas
-tqdm
-networkx
-sentencepiece
-safetensors
+transformers @ git+https://github.com/huggingface/transformers.git
+accelerate>=0.33
+nltk>=3.9
+pandas>=2.2
+tqdm>=4.66
+networkx>=3.3
+sentencepiece>=0.2
+safetensors>=0.4
 openai-harmony
-datasets
-gdown
-huggingface_hub
+datasets>=2.20
+gdown>=5.2
+huggingface-hub>=1.5.0,<2.0
 triton
 trl
 kernels
