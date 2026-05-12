@@ -71,6 +71,19 @@ FREEBASE_NS_PREFIXES = (
     "https://rdf.freebase.com/ns/",
 )
 
+WIKIMOVIES_RELATIONS = {
+    "directed_by",
+    "written_by",
+    "starred_actors",
+    "release_year",
+    "in_language",
+    "has_tags",
+    "has_genre",
+    "has_imdb_votes",
+    "has_imdb_rating",
+    "has_plot",
+}
+
 
 def _normalize_token(token: str) -> str:
     token = (token or "").strip()
@@ -101,9 +114,17 @@ def _parse_triple_line(line: str) -> Optional[Tuple[str, str, str]]:
     if not line or line.startswith("#"):
         return None
 
-    wikimovies_match = re.match(r"^\d+\s+(.*?)\s+([^\s]+)\s+(.*)$", line)
-    if wikimovies_match:
-        return tuple(_normalize_token(x) for x in wikimovies_match.groups())
+    if re.match(r"^\d+\s+", line):
+        tokens = line.split()
+        if len(tokens) >= 4 and tokens[0].isdigit():
+            body = tokens[1:]
+            for idx, tok in enumerate(body):
+                if tok in WIKIMOVIES_RELATIONS:
+                    head = " ".join(body[:idx]).strip()
+                    rel = tok.strip()
+                    tail = " ".join(body[idx + 1:]).strip()
+                    if head and rel and tail:
+                        return tuple(_normalize_token(x) for x in (head, rel, tail))
 
     if "|" in line:
         parts = line.split("|", 2)

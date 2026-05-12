@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from collections import defaultdict
 from pathlib import Path
 from typing import Callable, DefaultDict, Dict, Iterable, List, Optional, Set, Tuple
@@ -16,6 +17,26 @@ ALIAS_RELATIONS = {
     "type.object.name",
     "common.topic.alias",
     "name",
+}
+
+WIKIMOVIES_RELATIONS = {
+    "directed_by",
+    "written_by",
+    "starred_actors",
+    "release_year",
+    "in_language",
+    "has_tags",
+    "has_genre",
+    "has_imdb_votes",
+    "has_imdb_rating",
+    "has_plot",
+}
+
+WIKIMOVIES_COMPOSITE_TAIL_RELATIONS = {
+    "directed_by",
+    "written_by",
+    "starred_actors",
+    "has_tags",
 }
 
 
@@ -43,15 +64,34 @@ def normalize_kb_token(token: str) -> str:
     return token.strip()
 
 
+def normalize_lookup_key(token: str) -> str:
+    token = (token or "").strip().lower()
+    if not token:
+        return ""
+    token = unicodedata.normalize("NFKD", token)
+    token = "".join(ch for ch in token if not unicodedata.combining(ch))
+    token = token.replace("_", " ")
+    token = re.sub(r"[^\w\s]", " ", token)
+    token = re.sub(r"\s+", " ", token).strip()
+    return token
+
+
 def parse_kb_triple_line(line: str) -> Optional[Tuple[str, str, str]]:
     line = line.strip()
     if not line or line.startswith("#"):
         return None
 
-    wikimovies_match = re.match(r"^\d+\s+(.*?)\s+([^\s]+)\s+(.*)$", line)
-    if wikimovies_match:
-        h, r, t = wikimovies_match.groups()
-        return normalize_kb_token(h), normalize_kb_token(r), normalize_kb_token(t)
+    if re.match(r"^\d+\s+", line):
+        tokens = line.split()
+        if len(tokens) >= 4 and tokens[0].isdigit():
+            body = tokens[1:]
+            for idx, tok in enumerate(body):
+                if tok in WIKIMOVIES_RELATIONS:
+                    head = " ".join(body[:idx]).strip()
+                    rel = tok.strip()
+                    tail = " ".join(body[idx + 1:]).strip()
+                    if head and rel and tail:
+                        return normalize_kb_token(head), normalize_kb_token(rel), normalize_kb_token(tail)
 
     if "|" in line:
         parts = line.split("|", 2)
@@ -126,13 +166,23 @@ def build_node_index(nodes: Iterable[str], alias_map: Optional[Dict[str, Set[str
     index: Dict[str, str] = {}
 
     def add_key(key: str, canonical: str):
-        key = (key or "").strip().lower()
-        if not key:
+        raw_key = (key or "").strip()
+        if not raw_key:
             return
-        index.setdefault(key, canonical)
-        index.setdefault(key.replace(" ", "_"), canonical)
-        index.setdefault(key.replace("_", " "), canonical)
-        index.setdefault(re.sub(r"[\s_]+", "", key), canonical)
+        variants = {
+            raw_key.lower(),
+            raw_key.lower().replace(" ", "_"),
+            raw_key.lower().replace("_", " "),
+            re.sub(r"[\s_]+", "", raw_key.lower()),
+        }
+        normalized = normalize_lookup_key(raw_key)
+        if normalized:
+            variants.add(normalized)
+            variants.add(normalized.replace(" ", "_"))
+            variants.add(normalized.replace(" ", ""))
+        for variant in variants:
+            if variant:
+                index.setdefault(variant, canonical)
 
     for node in nodes:
         add_key(node, node)
@@ -180,6 +230,11 @@ def load_kb_adjacency(
             alias = t.strip()
             if alias and not alias.startswith("m.") and not alias.startswith("g."):
                 alias_map[hs].add(alias)
+        if collect_aliases and rs in WIKIMOVIES_COMPOSITE_TAIL_RELATIONS and "," in t:
+            for part in t.split(","):
+                alias = part.strip()
+                if alias:
+                    alias_map[ts].add(alias)
 
     return kb_out, kb_in, all_nodes, sorted(relations), dict(alias_map)
 

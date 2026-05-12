@@ -15,6 +15,11 @@ def needs_harmony(model_id: str) -> bool:
     return model_id_lower.startswith("openai/") or "gpt-oss" in model_id_lower
 
 
+def needs_trust_remote_code(model_id: str) -> bool:
+    model_id_lower = model_id.lower()
+    return "qwen" in model_id_lower
+
+
 def _parse_cuda_devices(target_device: str | None) -> list[int]:
     if not target_device:
         return []
@@ -72,6 +77,7 @@ def build_llm_strategy(
     strict_gpu_sharding: bool | None = None,
     target_device: str | None = None,
 ):
+    trust_remote_code = needs_trust_remote_code(model_id)
     env_sharding = os.getenv("ENABLE_MODEL_SHARDING", "").strip().lower()
     env_strict = os.getenv("STRICT_GPU_SHARDING", "").strip().lower() in {"1", "true", "yes"}
 
@@ -105,6 +111,7 @@ def build_llm_strategy(
             "torch_dtype": "auto",
             "device_map": "auto",
             "low_cpu_mem_usage": True,
+            "trust_remote_code": trust_remote_code,
         }
         if max_memory:
             load_kwargs["max_memory"] = max_memory
@@ -152,6 +159,7 @@ def build_llm_strategy(
             model_id,
             torch_dtype="auto",
             low_cpu_mem_usage=True,
+            trust_remote_code=trust_remote_code,
         )
         model.to(target_device)
 

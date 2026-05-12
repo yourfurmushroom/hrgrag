@@ -12,7 +12,7 @@ from typing import Tuple, List, Optional, Dict, Any, Set
 from pathlib import Path
 
 from agent_factory import build_llm_strategy
-from dataset_utils import build_node_index, load_kb_adjacency, load_relation_list
+from dataset_utils import build_node_index, load_kb_adjacency, load_relation_list, normalize_lookup_key
 
 
 # ============================================================
@@ -334,11 +334,15 @@ class KnowledgeGraphAgent:
         if sanitized in self.all_nodes:
             return sanitized
 
+        normalized = normalize_lookup_key(entity)
         for key in (
             entity.lower().strip(),
             entity.lower().replace(" ", "_").strip(),
             entity.lower().replace("_", " ").strip(),
             re.sub(r"[^\w\s\.]", "", entity).lower().replace(" ", "_"),
+            normalized,
+            normalized.replace(" ", "_"),
+            normalized.replace(" ", ""),
         ):
             if key in self._node_index:
                 return self._node_index[key]

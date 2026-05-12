@@ -8,7 +8,7 @@ from collections import deque
 from typing import Optional, List, Tuple, Dict, Any, Set
 
 from agent_factory import build_llm_strategy
-from dataset_utils import build_node_index, load_kb_adjacency, load_relation_list
+from dataset_utils import build_node_index, load_kb_adjacency, load_relation_list, normalize_lookup_key
 
 
 class BaselineKnowledgeGraphAgent:
@@ -274,23 +274,20 @@ class BaselineKnowledgeGraphAgent:
         if entity in self.all_nodes:
             return entity
 
+        normalized = normalize_lookup_key(entity)
+
         # 2. index 查 (handles 底線↔空格 + lowercase)
-        key_lower = entity.lower()
-        if key_lower in self._node_index:
-            return self._node_index[key_lower]
-
-        key_underscore = entity.lower().replace(" ", "_")
-        if key_underscore in self._node_index:
-            return self._node_index[key_underscore]
-
-        key_space = entity.lower().replace("_", " ")
-        if key_space in self._node_index:
-            return self._node_index[key_space]
-
-        # 3. strip punctuation fallback
-        key_stripped = re.sub(r"[^\w\s]", "", entity).lower().replace(" ", "_")
-        if key_stripped in self._node_index:
-            return self._node_index[key_stripped]
+        for key in (
+            entity.lower().strip(),
+            entity.lower().replace(" ", "_"),
+            entity.lower().replace("_", " "),
+            re.sub(r"[^\w\s]", "", entity).lower().replace(" ", "_"),
+            normalized,
+            normalized.replace(" ", "_"),
+            normalized.replace(" ", ""),
+        ):
+            if key in self._node_index:
+                return self._node_index[key]
 
         print(f"[Lookup] Entity '{entity}' not found in KB")
         return None

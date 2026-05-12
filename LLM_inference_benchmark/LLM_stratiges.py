@@ -110,11 +110,7 @@ class GenericHFStrategy(LLMStrategy):
     def __init__(self, model, tokenizer_name_or_path: str, max_new_tokens: int = 2048):
         super().__init__(model)
         self.max_new_tokens = max_new_tokens
-<<<<<<< HEAD
         self.tokenizer_name_or_path = tokenizer_name_or_path
-=======
-        self.disable_thinking = "qwen3" in tokenizer_name_or_path.lower()
->>>>>>> a22f6f2 (uu)
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path, use_fast=True)
         self.qwen_enable_thinking = os.getenv("QWEN_ENABLE_THINKING", "").strip().lower() in {"1", "true", "yes"}
         model_name = (tokenizer_name_or_path or "").lower()
@@ -156,7 +152,6 @@ class GenericHFStrategy(LLMStrategy):
         messages = self._build_messages(developer_instruction, user_content)
 
         if getattr(self.tokenizer, "chat_template", None):
-<<<<<<< HEAD
             apply_kwargs = {
                 "tokenize": False,
                 "add_generation_prompt": True,
@@ -177,19 +172,6 @@ class GenericHFStrategy(LLMStrategy):
                     tokenize=False,
                     add_generation_prompt=True,
                 )
-=======
-            chat_template_kwargs = {
-                "tokenize": False,
-                "add_generation_prompt": True,
-            }
-            if self.disable_thinking:
-                chat_template_kwargs["enable_thinking"] = False
-            try:
-                prompt = self.tokenizer.apply_chat_template(messages, **chat_template_kwargs)
-            except TypeError:
-                chat_template_kwargs.pop("enable_thinking", None)
-                prompt = self.tokenizer.apply_chat_template(messages, **chat_template_kwargs)
->>>>>>> a22f6f2 (uu)
         else:
             # Fallback for tokenizers that do not define a chat template.
             prompt = (
