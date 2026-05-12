@@ -69,9 +69,9 @@ MODEL_BACKBONES = [
     {
         "tag": "qwen3.5",
         "model_id": "Qwen/Qwen3.5-35B-A3B-FP8",
-        "use_model_sharding": True,
-        "strict_gpu_sharding": True,
-        "target_device": "cuda:0,cuda:1",
+        "use_model_sharding": False,
+        "strict_gpu_sharding": False,
+        "target_device": "cuda:0",
     },
     # {
     #     "tag": "llama3.1",
