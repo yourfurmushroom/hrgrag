@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import os
 import torch
 from transformers import AutoTokenizer
 
@@ -109,7 +110,11 @@ class GenericHFStrategy(LLMStrategy):
     def __init__(self, model, tokenizer_name_or_path: str, max_new_tokens: int = 2048):
         super().__init__(model)
         self.max_new_tokens = max_new_tokens
+        self.tokenizer_name_or_path = tokenizer_name_or_path
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path, use_fast=True)
+        self.qwen_enable_thinking = os.getenv("QWEN_ENABLE_THINKING", "").strip().lower() in {"1", "true", "yes"}
+        model_name = (tokenizer_name_or_path or "").lower()
+        self.is_qwen_family = "qwen" in model_name
 
         # 有些 tokenizer 沒有 pad_token
         tokenizer_eos_id = self._first_token_id(self.tokenizer.eos_token_id)
@@ -120,30 +125,59 @@ class GenericHFStrategy(LLMStrategy):
         elif self.tokenizer.pad_token_id is not None:
             self.tokenizer.pad_token_id = self._first_token_id(self.tokenizer.pad_token_id)
 
-    async def inference(self, developer_instruction: str, user_content: str) -> str:
-        messages = [
+    def _build_messages(self, developer_instruction: str, user_content: str):
+        system_content = f"You are a helpful assistant.\n{developer_instruction}"
+        user_content_final = user_content
+
+        # Qwen3.x supports explicit non-thinking mode. Prefer a model-native switch,
+        # and fall back to /no_think prompt control if the current template path
+        # does not accept chat_template_kwargs.
+        if self.is_qwen_family and not self.qwen_enable_thinking:
+            system_content += "\n/no_think"
+            if "/no_think" not in user_content_final:
+                user_content_final = f"/no_think\n{user_content_final}"
+
+        return [
             {
                 "role": "system",
-                "content": f"You are a helpful assistant.\n{developer_instruction}",
+                "content": system_content,
             },
             {
                 "role": "user",
-                "content": user_content,
+                "content": user_content_final,
             },
         ]
 
+    async def inference(self, developer_instruction: str, user_content: str) -> str:
+        messages = self._build_messages(developer_instruction, user_content)
+
         if getattr(self.tokenizer, "chat_template", None):
-            prompt = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
+            apply_kwargs = {
+                "tokenize": False,
+                "add_generation_prompt": True,
+            }
+            if self.is_qwen_family:
+                apply_kwargs["chat_template_kwargs"] = {
+                    "enable_thinking": self.qwen_enable_thinking,
+                }
+            try:
+                prompt = self.tokenizer.apply_chat_template(
+                    messages,
+                    **apply_kwargs,
+                )
+            except TypeError:
+                # Older transformers/tokenizers may not accept chat_template_kwargs.
+                prompt = self.tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
         else:
             # Fallback for tokenizers that do not define a chat template.
             prompt = (
                 "System: You are a helpful assistant.\n"
-                f"Developer: {developer_instruction}\n"
-                f"User: {user_content}\n"
+                f"Developer: {messages[0]['content']}\n"
+                f"User: {messages[1]['content']}\n"
                 "Assistant:"
             )
 

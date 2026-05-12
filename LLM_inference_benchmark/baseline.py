@@ -537,10 +537,20 @@ class BaselineKnowledgeGraphAgent:
                     "entity": entity,
                     "edges": [],
                     "answer": answer,
+                    "failure_stage": "entity_parse_failure",
+                    "references": references or [],
                     "retrieval_recall": 0.0,
                     "retrieval_precision": 0.0,
                     "retrieval_f1": 0.0,
                     "subgraph_size": 0,
+                    "selected_depth": hop_override if hop_override is not None else self.bfs_depth,
+                    "serialization_format": "baseline_bfs_text",
+                    "final_context": "",
+                    "timing": {
+                        "parse_latency": parse_latency,
+                        "retrieval_latency": 0.0,
+                        "generation_latency": 0.0,
+                    },
                     "token_usage": {
                         "parse1_tokens": p1_tokens,
                         "correction_tokens": 0,
@@ -599,15 +609,31 @@ class BaselineKnowledgeGraphAgent:
         print(f"[Answer] {answer} | tokens~{p2_tokens} | ctx_tokens~{context_tokens}\n")
 
         if save_path:
+            context_str = ""
+            if edges:
+                lines = ["Knowledge Graph Context:"]
+                for i, (s, r, o) in enumerate(edges, 1):
+                    lines.append(f"{i}. {self._display_node(s)} --[{r}]--> {self._display_node(o)}")
+                context_str = "\n".join(lines)
             self._dump(save_path, {
                 "question": user_prompt,
                 "entity": entity,
                 "edges": edges,
                 "answer": answer,
+                "failure_stage": "retrieval_empty" if not edges else "ok",
+                "references": references or [],
                 "retrieval_recall": retrieval_recall,
                 "retrieval_precision": retrieval_precision,
                 "retrieval_f1": retrieval_f1,
                 "subgraph_size": subgraph_size,
+                "selected_depth": depth,
+                "serialization_format": "baseline_bfs_text",
+                "final_context": context_str,
+                "timing": {
+                    "parse_latency": parse_latency,
+                    "retrieval_latency": retrieval_latency,
+                    "generation_latency": generation_latency,
+                },
                 "token_usage": {
                     "parse1_tokens": p1_tokens,
                     "correction_tokens": 0,

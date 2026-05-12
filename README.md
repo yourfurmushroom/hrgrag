@@ -17,6 +17,12 @@
 - `Dockerfile` / `docker-compose.yml`: 容器化一鍵執行
 - `config.env.example`: 目標機器可直接改成 `config.env`
 
+Qwen3.x 模型預設會以 non-thinking 模式執行；若要顯式打開 thinking，可設：
+
+```bash
+export QWEN_ENABLE_THINKING=1
+```
+
 ## 快速開始
 
 1. 複製這整個資料夾到新機器。

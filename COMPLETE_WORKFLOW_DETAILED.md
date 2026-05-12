@@ -1,946 +1,897 @@
-# 完整流程與消融實驗說明
+# COMPLETE WORKFLOW DETAILED
 
-## 1. 文件定位
+本文件不是只講概念，而是直接依照目前 `portable_runner` 的真實程式與 `artifacts/` 內已跑出的結果，完整說明：
 
-本文件整理目前 `portable_runner` 的完整流程，目的是提供一份可直接用於：
+1. 一次 benchmark run 是怎麼從 KB 與 dataset 走到 `grammar`、`results`、`dumps`
+2. HRG grammar 是怎麼被抽出來的
+3. online 階段怎麼 parse、驗證 chain、fallback、擴張 subgraph、生成答案
+4. `benchmark_results.json` 每個欄位是怎麼來的
+5. `all_models_outputs_wide.csv` 每一格到底存什麼
+6. grammar 的配對是不是「一條一條照順序對」這件事，實際答案是什麼
 
-1. 論文章節整理
-2. 口試簡報底稿
-3. 方法章與實驗章的統一說明
+---
 
-本文涵蓋的範圍包括：
+## 1. 本文件對應的實際 artifacts
 
-1. 環境與資料集準備
-2. offline HRG grammar 生成
-3. online LLM inference 與 KG retrieval
-4. benchmark 執行流程
-5. 消融實驗設計
-6. 評估指標
-7. 輸出 artifact 結構
-8. 現階段可安全宣稱的範圍與限制
+目前 `artifacts/` 裡已存在三組成功結果與一份批次總結：
 
-目前整套系統最適合的定位是：
+1. `artifacts/wikimovies-wiki_entities-test/`
+2. `artifacts/mlpq-en-zh-en-ills/`
+3. `artifacts/kqapro-validation/`
+4. `artifacts/_batch/run_all_summary.txt`
 
-**training-free、model-agnostic 的 KGQA framework**
+批次總結目前是：
 
-也就是說，本研究不額外 fine-tune LLM，不另外訓練新的 end-to-end QA 模型，而是：
-
-1. 在 offline 階段從知識圖譜中抽取結構先驗
-2. 在 online 階段讓 LLM 負責語意解析與答案生成
-3. 讓 HRG 作為 retrieval constraint 與 context compression 機制
-
-本研究關心的重點不只有最終答案正確率，也包括：
-
-1. 答案品質
-2. context 大小
-3. token 消耗
-4. 執行時間
-
-因此，本研究更適合被表述為一個「效果與成本 trade-off」的研究，而不是單純追求最高準確率的模型競賽。
-
-## 2. 整體執行入口
-
-### 2.1 Docker 版本
-
-若使用 Docker，目前的主要入口為：
-
-```bash
-cd portable_runner
-docker compose up --build
+```txt
+metaqa FAILED
+wikimovies OK
+mlpq OK
+kqapro OK
 ```
 
-這條命令現在預設會跑目前可完整閉環的 4 個資料集：
+所以這份文件的「結果解讀」部分，主要根據上面三組成功 run 來寫。
 
-1. `metaqa`
-2. `wikimovies`
-3. `mlpq`
-4. `kqapro`
+---
 
-預設批次清單定義在 [run_all_benchmarks.sh](/home/zihui/projects/masterPaperRemake/portable_runner/run_all_benchmarks.sh)。
+## 2. 整個 workflow 的最短總覽
 
-### 2.2 非 Docker 版本
+整體入口是 [run_pipeline.sh](/home/zihui/projects/masterPaperRemake/portable_runner/run_pipeline.sh)。
 
-若機器沒有 Docker，現在可直接使用本機一鍵入口：
+它只做兩件事：
 
-```bash
-cd portable_runner
-bash run_local_all.sh
+1. 先跑 `hrg_grammar/hrg_extract.py` 產生 grammar
+2. 再跑 `LLM_inference_benchmark/benchmark.py` 做 benchmark
+
+也就是：
+
+```text
+KB triples
+  -> HRG extractor
+  -> hrg_grammar.json / hrg_grammar.txt
+  -> benchmark.py
+  -> 每題 retrieval + answer
+  -> benchmark_results.json
+  -> all_models_outputs_wide.csv
+  -> dumps/q_xxxx.pkl / shared retrieval cache
 ```
 
-這個腳本會自動完成：
+---
 
-1. 準備 Python 環境
-2. 安裝依賴
-3. 下載與整理資料集
-4. 生成 config
-5. 依序執行 benchmark
+## 3. 每次 run 的命名與輸出位置怎麼決定
 
-### 2.3 核心腳本
+### 3.1 run tag 怎麼來
 
-目前流程由以下腳本共同組成：
+`run_pipeline.sh` 會先根據 dataset 組出 `RUN_TAG`。
 
-1. [setup_env.sh](/home/zihui/projects/masterPaperRemake/portable_runner/setup_env.sh)
-2. [download_datasets.sh](/home/zihui/projects/masterPaperRemake/portable_runner/download_datasets.sh)
-3. [download_datasets.py](/home/zihui/projects/masterPaperRemake/portable_runner/download_datasets.py)
-4. [generate_configs.py](/home/zihui/projects/masterPaperRemake/portable_runner/generate_configs.py)
-5. [resolve_kb.py](/home/zihui/projects/masterPaperRemake/portable_runner/resolve_kb.py)
-6. [run_pipeline.sh](/home/zihui/projects/masterPaperRemake/portable_runner/run_pipeline.sh)
-7. [auto_benchmark.sh](/home/zihui/projects/masterPaperRemake/portable_runner/auto_benchmark.sh)
-8. [run_all_benchmarks.sh](/home/zihui/projects/masterPaperRemake/portable_runner/run_all_benchmarks.sh)
-9. [run_local_all.sh](/home/zihui/projects/masterPaperRemake/portable_runner/run_local_all.sh)
+例子：
 
-## 3. 資料集準備與目前覆蓋範圍
+1. `wikimovies + wiki_entities + test` -> `wikimovies-wiki_entities-test`
+2. `mlpq + en-zh + en + ills` -> `mlpq-en-zh-en-ills`
+3. `kqapro + validation` -> `kqapro-validation`
 
-### 3.1 目前可完整執行的資料集
+這個 tag 之後會同時決定 grammar、results、dumps 的輸出資料夾。
 
-目前 `portable_runner` 已接好的資料集為：
+### 3.2 輸出目錄長什麼樣
 
-1. `MetaQA`
-2. `WikiMovies`
-3. `MLPQ`
-4. `KQAPro`
+每次 run 會有：
 
-這些資料的固定位置都在 `portable_runner/Datasets/` 底下。
+```text
+artifacts/<run_tag>/
+  grammar/
+    hrg_grammar.json
+    hrg_grammar.txt
+  results/
+    benchmark_results.json
+    all_models_outputs_wide.csv
+  dumps/
+    per_model/
+    _shared_retrieval/
+```
 
-### 3.2 各資料集現況
+例如 WikiMovies 實際就是：
 
-#### MetaQA
+```text
+artifacts/wikimovies-wiki_entities-test/
+```
 
-目前固定路徑為：
+---
 
-1. dataset root: `Datasets/MetaQA`
-2. KB: `Datasets/MetaQA/kb.txt`
-3. relation list: `Datasets/MetaQA/relations.json`
-4. benchmark split: `test`
-5. variant: `vanilla`
+## 4. Offline 階段：HRG grammar 是怎麼做出來的
 
-這是目前與整套 benchmark 最自然、最乾淨對齊的一組資料。
+核心程式是 [hrg_grammar/hrg_extract.py](/home/zihui/projects/masterPaperRemake/portable_runner/hrg_grammar/hrg_extract.py)。
 
-#### WikiMovies
+可以拆成 8 個步驟。
 
-目前固定路徑為：
+### 4.1 讀 KB 三元組並正規化
 
-1. dataset root: `Datasets/WikiMovies`
-2. KB: `Datasets/WikiMovies/movieqa/knowledge_source/wiki_entities/wiki_entities_kb.txt`
-3. 問題檔：`Datasets/WikiMovies/movieqa/questions/wiki_entities/wiki-entities_qa_test.txt`
-4. benchmark split: `test`
+首先會逐行讀 KB，呼叫：
 
-WikiMovies 也能直接對接現在的 line-based triple parser。
+1. `_normalize_token`
+2. `_parse_triple_line`
+3. `load_labeled_kb_graph`
 
-#### MLPQ
+支援的輸入格式包含：
 
-目前固定路徑為：
+1. `head|relation|tail`
+2. `head\trelation\ttail`
+3. N-Triples
+4. 一般空白分隔
+5. WikiMovies 特殊格式：`數字 head relation tail`
 
-1. dataset root: `Datasets/MLPQ`
-2. KB: `Datasets/MLPQ/datasets/KGs/fusion_bilingual_KGs/ILLs_fusion/merged_ILLs_KG_en_zh.txt`
-3. 預設問題設定：`en-zh / en / ills`
+#### 例子
 
-MLPQ 的特性是跨語知識圖譜問答，因此答案字串正規化比 MetaQA 與 WikiMovies 更敏感。
+如果原始行是：
 
-#### KQAPro
+```text
+42 The_Matrix directed_by Lana_Wachowski
+```
 
-KQAPro 目前不是原生直接接上，而是透過 compatibility adaptation 接進來。原因是原始 snapshot 中的：
+或
 
-1. `hf_snapshot/kb.json`
+```text
+The_Matrix|directed_by|Lana_Wachowski
+```
 
-無法直接被目前 benchmark 的 line-based triple loader 讀取，因此 portable workflow 會：
+最後都會被統一成：
 
-1. 下載 snapshot
-2. 將 `kb.json` 轉成 `Datasets/KQAPro/kqapro_kb_triples.tsv`
-3. 使用 `validation` 而不是 `test`
+```text
+(head="The_Matrix", relation="directed_by", tail="Lana_Wachowski")
+```
 
-之所以改用 `validation`，是因為官方 `test.json` 沒有 gold answer，無法用來做完整 benchmark 評估。
+這一步的重點是：先把所有奇形怪狀格式收斂成同一種 triple。
 
-因此，在論文或口試中，KQAPro 較穩妥的說法是：
+### 4.2 建立有標籤的 MultiDiGraph
 
-**adapted compatibility setting**
+接著每條 triple 都會進 `networkx.MultiDiGraph`：
 
-而不是完全原生 benchmark setting。
+1. `head` 是起點
+2. `tail` 是終點
+3. `relation` 同時當 edge key 與 `rel`
 
-### 3.3 尚未完整閉環的資料集
+為什麼不是普通 `DiGraph`：
 
-目前 portable workflow 也能下載：
+1. 同一對節點可能有多條不同 relation
+2. KG 本身有方向
+3. 之後還要保留 relation label
 
-1. `WQSP`
-2. `CWQ`
-3. `Mintaka`
+### 4.3 轉成 undirected skeleton
 
-但這三組目前只有 question / answer 資料，沒有隨附 benchmark 可直接使用的 KG triples，因此沒有被放進預設可執行清單。
+HRG 抽取時不是直接在原始有向 KG 上做 clique tree，而是先做 skeleton：
 
-## 4. Offline 階段：HRG Grammar 生成
+1. 節點保留
+2. 邊只保留「有沒有連接」
+3. 暫時不管 relation label 與方向
 
-### 4.1 Offline 階段的角色
+目的不是丟語意，而是方便：
 
-offline 階段負責把原始知識圖譜轉成一組可重用的結構規則。這些 grammar 不是直接用來回答問題，而是用來：
+1. 算 degree
+2. 做 MCS ordering
+3. 做 triangulation / clique tree
 
-1. 提供結構先驗
-2. 捕捉 relation 共現模式
-3. 作為 online 檢索限制與局部擴張依據
+### 4.4 先抽多個 BFS sample，不直接吃整張圖
 
-因此，offline 的產物不是答案模型，而是一個「圖結構樣板庫」。
+程式不會直接把整張大圖拿去做 clique extraction，而是：
 
-### 4.2 主要程式與資料流
+1. 先根據 skeleton degree 避開 hub
+2. 選 seed
+3. 對每個 seed 做 capped BFS
+4. 取 node-induced subgraph
 
-核心實作在：
-
-1. [portable_runner/hrg_grammar/hrg_extract.py](/home/zihui/projects/masterPaperRemake/portable_runner/hrg_grammar/hrg_extract.py)
-
-整個 offline pipeline 的實際步驟是：
-
-1. 讀入 triple file
-2. 將 triple 正規化為 `(head, relation, tail)`
-3. 建立帶標籤有向多重圖 `MultiDiGraph`
-4. 忽略方向與 relation label，轉成 undirected skeleton
-5. 從 skeleton degree 分布中選種子，做多次 BFS node-induced sampling
-6. 對每個 sample graph 建立 chordal-like 結構
-7. 從 triangulation 過程中提取 maximal clique candidates
-8. 建 clique tree
-9. 將 clique tree 做二元化與冗餘 leaf 修剪
-10. 把每個 bag 轉成一條 HRG rule
-11. 合併重複 rule
-12. 輸出 grammar JSON / TXT
-
-下面把每一步拆開說。
-
-### 4.3 第一步：讀入 triple 並正規化 token
-
-在 `hrg_extract.py` 中，最先做的是：
-
-1. `_normalize_token(token)`
-2. `_parse_triple_line(line)`
-3. `load_labeled_kb_graph(kb_path, max_triples)`
-
-這裡的工作包含：
-
-1. 去除 `<...>` 包裝
-2. 處理 Freebase URI 前綴
-3. 處理 literal、語言標記、datatype 標記
-4. 支援多種輸入格式
-   - `head|relation|tail`
-   - `head\trelation\ttail`
-   - N-Triples
-   - 一般空白分隔三元組
-   - WikiMovies 特殊 line format
-
-這一步完成後，會把資料統一成：
-
-1. 節點 `head`
-2. 關係 `relation`
-3. 節點 `tail`
-
-### 4.4 第二步：建立 labeled directed MultiDiGraph
-
-`load_labeled_kb_graph()` 會把所有 triples 放進 `networkx.MultiDiGraph`：
-
-1. `u = head`
-2. `v = tail`
-3. `key = relation`
-4. `rel = relation`
-
-之所以使用 `MultiDiGraph` 而不是一般 `DiGraph`，是因為：
-
-1. 同一對節點之間可能有多種 relation
-2. graph 是有方向的
-3. 後續要保留 relation label
-
-到這一步為止，圖仍然是語意完整的有向 labeled KG。
-
-### 4.5 第三步：轉成 undirected skeleton
-
-接著會透過 `to_undirected_skeleton(G)` 建立 `Graph H`：
-
-1. 節點沿用原 KG 節點
-2. 若 `(u, v, rel)` 存在，就在 `H` 中加入無向邊 `{u, v}`
-3. relation label 與方向此時暫時被忽略
-
-這一步的目的不是要丟掉語意，而是：
-
-1. 方便後續做圖分解
-2. 方便計算節點 degree
-3. 方便做 MCS 與 triangulation
-
-也就是說，offline grammar induction 的結構分解階段，是先在 skeleton 上做，而不是直接在 labeled directed graph 上做 clique 分析。
-
-### 4.6 第四步：robust BFS node-induced sampling
-
-這一步對應：
-
-1. `pick_seed_avoid_hubs(...)`
-2. `bfs_node_induced_sample_capped(...)`
-3. `k_bfs_samples_robust(...)`
-
-#### 為什麼要 sampling
-
-如果直接在整張圖上做 clique 與 grammar induction，很容易發生：
-
-1. clique explosion
-2. 高 degree hub 主導結構
-3. bag 太大、規則太大
-
-所以目前做法是先抽樣幾個局部子圖，再從這些子圖學高頻結構樣板。
-
-#### 具體怎麼抽
-
-1. 先在 skeleton 上計算所有節點 degree
-2. 用 `SEED_DEGREE_QUANTILE = 0.80` 過濾 seed 候選
-   - 只優先從 degree 不高於 80% 分位數的節點中挑 seed
-3. 對每個 seed 做 BFS
-4. 每個節點展開鄰居時：
-   - 若鄰居太多，先 shuffle
-   - 再截斷到 `BFS_MAX_BRANCH = 30`
-5. 直到收集到大約 `S_SAMPLE_SIZE = 500` 個節點
-6. 最後取 induced subgraph
-
-#### 為什麼說是 node-induced sample
-
-因為最後保留的是：
-
-1. 被 BFS 納入的節點集合
-2. 原圖中這些節點之間的所有邊
-
-所以不是只保留 BFS tree 本身，而是保留這批節點在原圖中的 induced subgraph。
-
-#### 現行預設值
+預設參數是：
 
 1. `K_SAMPLES = 4`
 2. `S_SAMPLE_SIZE = 500`
-3. `SEED_DEGREE_QUANTILE = 0.80`
-4. `BFS_MAX_BRANCH = 30`
-5. `RANDOM_SEED = 0`
+3. `BFS_MAX_BRANCH = 30`
 
-這些值較適合表述為：
+#### 為什麼要這樣
 
-1. 結構膨脹控制參數
-2. 計算預算控制參數
-3. 可重現的保守預設值
+如果直接從高 degree 節點展開，很容易 clique 爆炸，grammar 會變得不可控。
 
-### 4.7 第五步：MCS ordering
+所以它不是「隨便抽」，而是「刻意限制 hub 擴張」。
 
-每個 sample graph 會先忽略 edge direction 與 relation label，進入：
+### 4.5 對 sample graph 做 MCS 與 triangulation
 
-`mcs_ordering(G)`
+每個 sample graph 會做：
 
-這裡使用的是 `Maximum Cardinality Search, MCS`。
+1. `mcs_ordering`
+2. `triangulate_from_order`
+3. 收 maximal clique candidates
 
-具體做法：
+這裡的作用是把 sample graph 轉成一組 clique bags。
 
-1. 每個未編號節點一開始 label = 0
-2. 每一輪選出 label 最大的未編號節點 `v`
-3. 把 `v` 加入 ordering
-4. 對 `v` 的所有未編號鄰居，其 label 加 1
-5. 重複直到所有節點都被編號
+### 4.6 把 cliques 組成 clique tree，再二元化、修剪
 
-產物是一個 elimination ordering。
+接著會：
 
-這個 ordering 之後會拿來做 triangulation。
+1. `build_clique_tree_from_cliques`
+2. `binarize_clique_tree`
+3. `prune_leaf_no_internal`
 
-### 4.8 第六步：triangulation，讓圖變成 chordal-like 結構
+意思是：
 
-對應函式：
+1. 先用 clique overlap 建 weighted graph
+2. 取 maximum spanning tree 當 clique tree
+3. 若某個 bag 子節點超過 2 個，就 clone bag 做二元化
+4. 若某個 leaf bag 完全被 parent 包住，就刪掉
 
-`triangulate_from_order(G, order)`
+這樣做是為了讓後面的 HRG rule 形狀更穩定。
 
-這一步是你特別提到的重點。實際上做的是：
+### 4.7 把每個 bag 變成一條 HRG rule
 
-1. 依照 ordering 逐一處理節點 `v`
-2. 找出在 ordering 中排在 `v` 後面的鄰居 `later`
-3. 將 `later` 裡的節點彼此補邊，使其形成 clique
-4. 這些補上的邊就是 fill-in edges
+真正 rule 抽取在：
 
-這一步可視為：
+```python
+extract_hrg_rules_labeled(G, T, bags, root=0)
+```
 
-1. 利用 elimination ordering 對圖做 triangulation
-2. 讓圖趨近 chordal graph 的結構
+規則是：
 
-#### 為什麼要 triangulation
+1. root bag 的左邊是 `S/0`
+2. 非 root bag 的左邊是 `N/k`
+3. 其中 `k = 這個 bag 與 parent 的交集大小`
+4. 該 bag 負責的 terminal edges 會放進 RHS 的 `terminals`
+5. 該 bag 的 child 會變成 RHS 的 `nonterms`
 
-因為：
+#### 這裡的「complete」是什麼意思
 
-1. chordal / triangulated graph 比較容易抽 clique 結構
-2. elimination ordering 可以自然提供 clique 候選
-3. 不需要直接呼叫昂貴的 `nx.find_cliques()`
+一個 bag 要變成一條完整 rule，至少要把三件事補齊：
 
-### 4.9 第七步：從 triangulation 過程收集 maximal clique candidates
+1. `lhs` 是哪個 nonterminal
+2. `rhs.terminals` 是這個 bag 實際承接到的 labeled edges
+3. `rhs.nonterms` 是它對子 bag 的銜接點位 `att`
 
-在 `triangulate_from_order()` 中，每當處理一個節點 `v`，就會收集：
+也就是說，`complete` 不是單純「把 relation 收集起來」，而是：
 
-1. `clique_candidate = {v} ∪ later_neighbors`
+1. 先決定 bag 與 parent 的交集
+2. 再決定 bag 內哪些點是 external，哪些是 internal
+3. 然後對 bag 內節點做局部 re-index
+4. 最後把 terminal edges 與 child attachment 一起寫進 RHS
 
-然後：
+這樣一條 rule 才算完整。
 
-1. 將所有 candidate 去重
-2. 依大小排序
-3. 過濾掉被其他更大 clique 完全包含的 candidate
+### 4.8 合併重複 rule
 
-最後保留 maximal clique 候選。
+最後會跑：
 
-這裡要強調：
+```python
+merge_duplicate_rules(rules)
+```
 
-1. 不是直接暴力列舉所有 clique
-2. 而是利用 elimination 過程得到 clique 候選，再保留 maximal clique
+如果兩條 rule 的：
 
-### 4.10 第八步：建立 clique tree
+1. `lhs`
+2. `rhs.terminals`
+3. `rhs.nonterms`
 
-對應函式：
+完全相同，就合併成一條，然後把 `count` 加總。
 
-`build_clique_tree_from_cliques(cliques)`
+這個 `count` 後面 online 階段會拿來當規則強度排序依據。
 
-具體做法：
+---
 
-1. 每個 clique 視為一個 node
-2. 任兩個 clique 若有交集，則在它們之間連邊
-3. 邊權重設為交集大小
-4. 在這張 clique graph 上取 maximum spanning tree
+## 5. grammar 檔案長什麼樣
 
-最後得到的就是 clique tree。
+grammar 會輸出兩份：
 
-這個 clique tree 的意義是：
+1. `hrg_grammar.json`
+2. `hrg_grammar.txt`
 
-1. 用一棵樹組織所有局部 clique bag
-2. 讓不同 bag 之間共享的節點能被明確表示
-3. 方便後續將 bag 轉成具有 external nodes 的 graph grammar rule
+### 5.1 JSON 格式
 
-### 4.11 第九步：binarize clique tree
-
-對應函式：
-
-`binarize_clique_tree(T, bags, root=0)`
-
-若 clique tree 中某個 bag 有超過兩個 child，程式會：
-
-1. 複製一個 bag clone
-2. 把原先多出來的 children 移到 clone 底下
-3. 直到每個節點最多只保留兩個 child
-
-這一步的目的不是改變 bag 本身內容，而是：
-
-1. 控制 tree branching factor
-2. 避免後續 grammar RHS 結構過於複雜
-
-### 4.12 第十步：prune redundant leaves
-
-對應函式：
-
-`prune_leaf_no_internal(T, bags, root=0)`
-
-若某個 leaf bag：
-
-1. 不是 root
-2. 只有一個 parent
-3. 且該 bag 完全被 parent bag 包含
-
-那就刪掉它。
-
-這一步等於把沒有帶來新 internal node 的冗餘葉節點去掉，避免生成資訊增益太低的規則。
-
-### 4.13 第十一步：把 clique-tree bag 轉成 HRG rule
-
-這一步對應：
-
-1. `Nonterminal`
-2. `RHS`
-3. `Rule`
-4. `extract_hrg_rules_labeled(...)`
-
-這是整個 offline 最關鍵的一步。
-
-#### 先建 node-to-bags index
-
-程式會先建立：
-
-1. `node2bags`
-   - 紀錄每個原圖節點出現在哪些 bag
-2. `bag_sizes`
-   - 每個 bag 的大小
-
-#### edge-to-bag assignment
-
-接著會把原始有向 labeled edge `(u, v, rel)` 指派給某個 bag：
-
-1. 找同時包含 `u` 與 `v` 的 bag 候選
-2. 從中選最小的 bag
-3. 把這條 edge 指派到該 bag
-
-這一步很重要，因為它決定：
-
-1. 某條 terminal edge 最後屬於哪一條規則
-2. 避免同一條 edge 被重複放進多個 bag
-
-#### 對每個 bag 建 rule
-
-對每個 clique-tree 節點 `eta`：
-
-1. 找 parent `p`
-2. 取目前 bag = `bags[eta]`
-
-##### lhs 怎麼決定
-
-如果 `eta` 是 root：
-
-1. `lhs = Nonterminal("S", 0)`
-
-如果 `eta` 不是 root：
-
-1. 找 `bag ∩ parent_bag`
-2. 這個交集就是 external nodes
-3. `lhs = Nonterminal("N", len(intersection))`
-
-所以：
-
-1. `lhs.name`
-   - `S` 代表起始規則
-   - `N` 代表一般中間規則
-2. `lhs.rank`
-   - 代表此規則有多少 external attachment points
-
-##### external / internal nodes 怎麼分
-
-1. 與 parent bag 的交集 = external nodes
-2. bag 中其餘節點 = internal nodes
-
-然後程式會建立：
-
-`verts = external nodes + internal nodes`
-
-再用這個順序賦予局部索引。
-
-##### rhs.terminals 怎麼來
-
-對所有被指派到這個 bag 的 edge `(u, v, rel)`：
-
-1. 若 `u` 與 `v` 都在目前 bag 的局部節點集合中
-2. 就將它轉成 `(idx[u], rel, idx[v])`
-3. 放進 `rhs.terminals`
-
-所以 `rhs.terminals` 是：
-
-1. bag 內明確出現的 relation edge
-2. 用局部節點索引來表示
-
-##### rhs.nonterms 怎麼來
-
-對每個 child bag：
-
-1. 取 `bag ∩ child_bag`
-2. 把交集對應成目前 bag 裡的局部索引 tuple
-3. 形成一個 nonterminal attachment
-
-程式中用的是：
-
-1. `Nonterminal("N", len(att))`
-2. `att = tuple(idx[x] for x in att_nodes)`
-
-所以 `rhs.nonterms` 表示：
-
-1. 此規則右側還接了一個未展開的子結構
-2. 且那個子結構透過哪些 attachment points 與目前規則連接
-
-### 4.14 第十二步：合併重複規則
-
-對應函式：
-
-`merge_duplicate_rules(rules)`
-
-它會以：
-
-1. `lhs.name`
-2. `lhs.rank`
-3. canonicalized `rhs`
-
-作為規則 signature，將完全相同的規則合併，累積 `count`。
-
-因此最終 grammar 不是一堆 bag 的原始逐條轉錄，而是一個：
-
-1. 去重後的 rule set
-2. 每條 rule 帶有出現次數
-
-### 4.15 Grammar JSON 的具體例子
-
-一條 HRG 規則的 JSON 形式如下：
+每條 rule 長這樣：
 
 ```json
 {
-  "lhs": {"name": "S", "rank": 0},
+  "lhs": {"name": "N", "rank": 27},
   "rhs": {
     "terminals": [
-      {"a": 231, "rel": "directed_by", "b": 37},
-      {"a": 231, "rel": "has_tags", "b": 110},
-      {"a": 231, "rel": "written_by", "b": 37}
+      {"a": 27, "rel": "directed_by", "b": 11},
+      {"a": 27, "rel": "has_genre", "b": 8},
+      {"a": 27, "rel": "starred_actors", "b": 7},
+      {"a": 27, "rel": "written_by", "b": 1}
     ],
     "nonterms": [
-      {"name": "N", "rank": 288, "att": [0, 1, 2, 3]}
+      {"name": "N", "rank": 1, "att": [27]}
     ]
   },
   "count": 1
 }
 ```
 
-欄位含義：
+上面這個形狀對應到 `artifacts/wikimovies-wiki_entities-test/grammar/hrg_grammar.txt` 裡實際存在的一條 `N/27` 規則。
 
-1. `lhs`
-   - 這條規則左側非終結符
-2. `rhs.terminals`
-   - bag 內顯式出現的 terminal relation edges
-3. `rhs.nonterms`
-   - 尚未展開的子結構插槽
-4. `count`
-   - 相同規則在樣本中累積出現的次數
+### 5.2 TXT 格式比較好讀
 
-### 4.16 規則中 `a`、`b`、`att` 的數字到底是什麼
+WikiMovies grammar 中有這樣一條：
 
-這些數字不是原始 KG entity id，而是：
+```txt
+N/27  count=1
+  T: [..., (27, 'directed_by', 11), (27, 'has_genre', 8), ..., (27, 'starred_actors', 7), ..., (27, 'written_by', 1), ...]
+  N: [('N', 1, (27,))]
+```
 
-1. 目前這條 rule 內部的局部節點編號
+這代表：
 
-也就是說，規則描述的是：
+1. 這條 rule 左邊是 `N/27`
+2. 右邊 terminals 裡同時出現 `directed_by`
+3. 也同時出現 `has_genre`
+4. 也同時出現 `starred_actors`
+5. 也同時出現 `written_by`
 
-1. 局部結構中的連接方式
-2. relation 共現模式
+換句話說，這條 rule 表示在某個局部結構裡，這些 relation 曾一起共現。
 
-而不是原始實體名稱本身。
+---
 
-### 4.17 Offline 最終輸出位置
+## 6. Online 階段：每一題是怎麼跑的
 
-每個 run tag 會輸出：
+核心程式是 [LLM_inference_benchmark/benchmark.py](/home/zihui/projects/masterPaperRemake/portable_runner/LLM_inference_benchmark/benchmark.py) 和 [LLM_inference_benchmark/knowledgegraph_agent.py](/home/zihui/projects/masterPaperRemake/portable_runner/LLM_inference_benchmark/knowledgegraph_agent.py)。
 
-1. `artifacts/<run_tag>/grammar/hrg_grammar.json`
-2. `artifacts/<run_tag>/grammar/hrg_grammar.txt`
+一題的流程可以拆成 10 步。
 
-其中：
+### 6.1 先把 dataset 讀成 `(question, references)` 清單
 
-1. JSON 主要供程式載入
-2. TXT 主要供人閱讀與檢查 rule 內容
+不同資料集會進不同 loader：
 
-## 5. Online 階段：LLM Inference 與 Retrieval
+1. WikiMovies -> `load_wikimovies_dataset`
+2. MLPQ -> `load_mlpq_dataset`
+3. KQAPro -> `load_normalized_jsonl_dataset`
 
-### 5.1 主要程式位置
+最後 benchmark 看到的單位都一樣：
 
-online KGQA pipeline 的核心在：
+```text
+(question, [gold_answer1, gold_answer2, ...])
+```
 
-1. [portable_runner/LLM_inference_benchmark/knowledgegraph_agent.py](/home/zihui/projects/masterPaperRemake/portable_runner/LLM_inference_benchmark/knowledgegraph_agent.py)
-2. [portable_runner/LLM_inference_benchmark/benchmark.py](/home/zihui/projects/masterPaperRemake/portable_runner/LLM_inference_benchmark/benchmark.py)
-3. [portable_runner/LLM_inference_benchmark/baseline.py](/home/zihui/projects/masterPaperRemake/portable_runner/LLM_inference_benchmark/baseline.py)
-4. [portable_runner/LLM_inference_benchmark/LLM_stratiges.py](/home/zihui/projects/masterPaperRemake/portable_runner/LLM_inference_benchmark/LLM_stratiges.py)
+### 6.2 LLM 第一次 parse：提候選 entity + relation chain
 
-### 5.2 Agent 初始化時做了什麼
+`prepare_retrieval()` 先呼叫 `_parse_intent_candidates()`。
 
-`KnowledgeGraphAgent.__init__()` 啟動時會：
+LLM 要回：
 
-1. 載入指定 LLM strategy
-2. 載入 KB adjacency
-3. 載入 relation list
-4. 建立 `allowed_rel_set`
-5. 建立 `allowed_rel_tokens`
-   - 包含正向 relation 與 `relation^-1`
-6. 建立 entity alias / node index
-7. 若 grammar 檔存在，載入 `HRGMatcher`
+```json
+[
+  {"entity": "Tom Hanks", "chain": ["starred_actors^-1", "directed_by"], "confidence": 0.82}
+]
+```
 
-所以 agent 一開始就同時擁有：
+#### 這一步做了什麼
 
-1. LLM semantic parsing 能力
-2. KG traversal 能力
-3. grammar matching 能力
+1. 先挑一批可能 relation token 放進 prompt
+2. 給 few-shot examples
+3. 若有 grammar，就把 top frequent grammar patterns 當 structural hints 放進 prompt
+4. 讓 LLM 回傳 top-k candidates
 
-### 5.3 Prompt 格式化
+### 6.3 relation token 會再做 fuzzy 對齊
 
-HF 模型現在會優先使用：
-
-`tokenizer.apply_chat_template(...)`
-
-而不是手動字串拼 prompt。這對：
-
-1. `Qwen/Qwen2.5-7B-Instruct`
-2. `meta-llama/Llama-3.1-8B-Instruct`
-
-都比較重要，因為這類模型在原生 instruct template 下通常更穩。
-
-### 5.4 Candidate Parsing：模型怎麼先抓 entity 與 relation chain
-
-這一步主要在：
-
-`_parse_intent_candidates(user_prompt, num_candidates)`
-
-#### 先建立 relation prompt 候選集合
-
-程式會先呼叫：
-
-`_select_relation_prompt_candidates(user_prompt, limit=64)`
-
-這一步會：
-
-1. 先看問題文字和 relation token 的 lexical overlap
-2. 若 grammar 存在，也把 top grammar rules 裡常出現的 relation 加入 shortlist
-3. 產生一個 prompt 內給 LLM 參考的候選 relation 集合
-
-也就是說，LLM 並不是對整個 relation universe 完全無限制亂猜，而是：
-
-1. 優先從 shortlisted relation candidate set 中選
-
-#### Prompt 要求模型輸出什麼
-
-Developer prompt 會要求 LLM 輸出 JSON array，每個物件包含：
-
-1. `entity`
-2. `chain`
-3. `confidence`
+不是 LLM 輸出什麼就直接用。
 
 例如：
 
+1. `directed by`
+2. `directed_by`
+3. `directed_by^-1`
+
+都會再經過 `_fuzzy_match_relation()` 對齊到系統實際允許的 relation token。
+
+### 6.4 先驗證 chain 能不能在 KB 上走通
+
+對每個 candidate，會做 `_check_chain_validity(entity, chain)`。
+
+#### 例子
+
+如果 candidate 是：
+
 ```json
-[{"entity": "Tom Hanks", "chain": ["starred_actors^-1", "directed_by"], "confidence": 0.82}]
+{"entity": "Tom Hanks", "chain": ["starred_actors^-1", "directed_by"]}
 ```
 
-其中：
+系統會：
 
-1. `entity`
-   - 題目的 topic entity
-2. `chain`
-   - relation traversal 序列
-3. `confidence`
-   - LLM 自估可信度
+1. 先把 `Tom Hanks` 對到 KB 節點
+2. 第 1 hop 走 `starred_actors^-1`
+3. 看能不能找到電影集合
+4. 第 2 hop 從這些電影走 `directed_by`
+5. 若任何一步 frontier 變空，就視為 invalid
 
-#### 解析與清理
+這一步只是在檢查「有沒有路」，還沒真正產生最後 context。
 
-模型輸出後，程式會：
+### 6.5 grammar matching 實際怎麼配對
 
-1. 用 balanced JSON segment parser 抽出 JSON array 或 JSON object
-2. 逐個 relation 做 `_fuzzy_match_relation()`
-3. 把不合法的 relation token 丟掉
-4. 做 candidate 去重 `_dedup_candidates()`
+這是最重要的一段。
 
-若完全解析失敗，還會退化成：
+很多人直覺會以為 grammar matching 是：
 
-1. 只保留 entity
-2. chain 為空
+1. 第一跳對第一條 grammar edge
+2. 第二跳對第二條 grammar edge
+3. 完全照順序一條一條對
 
-### 5.5 Candidate 在 KG 上怎麼檢查可執行性
+但這個 repo 目前**不是這樣做**。
 
-這一步在：
+實作在 `HRGMatcher.match_rules()`，真正邏輯是：
 
-`_check_chain_validity(entity, chain)`
-
-流程如下：
-
-1. 先把 entity 對到 KB 節點
-2. 將 frontier 初始化為 `{start_entity}`
-3. 對 chain 每一 hop：
-   - 取目前 frontier 中每個節點
-   - 用 `_neighbors_for_token(ent, rel_token)` 找下一跳
-   - 若 relation 是 `rel^-1`，則走 backward
-   - 否則走 forward
-4. 逐 hop 更新 frontier
-5. 若某 hop 後 frontier 變空，該 chain 視為失敗
-
-回傳會包括：
-
-1. `valid`
-2. `step_sizes`
-3. `final_size`
-4. `failed_hop`
-
-所以這一步不是語意判斷，而是：
-
-**該 chain 在 KG 上到底走不走得通**
-
-### 5.6 Grammar 怎麼跟 chain 做 matching
-
-這一步由 `HRGMatcher` 負責。
-
-#### Grammar 載入時會做什麼
-
-每條 rule 載入後，會先抽出：
-
-1. `rhs.terminals` 中所有 relation label
-
-並存成：
-
-`rule["_cached_labels"]`
-
-#### chain matching 怎麼做
-
-當給定一條 chain，例如：
-
-1. `["written_by", "written_by^-1", "has_genre"]`
-
-程式會先把它轉成 bare relation：
-
-1. 去掉 `^-1`
+1. 先把 chain 去方向
+2. 例如 `starred_actors^-1` 會變成 `starred_actors`
+3. 把整條 chain 變成一個 bare relation set
+4. 只要某條 grammar rule 的 terminal labels 包含這個 set，就算 match
 
 也就是：
 
-1. `["written_by", "written_by", "has_genre"]`
+```text
+bare_chain ⊆ rule_labels
+```
 
-然後與每條 grammar rule 的 `_cached_labels` 做比對：
+#### 具體例子
 
-1. 若 bare chain 是 rule label set 的子集，視為 match
+若 predicted chain 是：
 
-接著依：
+```text
+["starred_actors^-1", "directed_by"]
+```
 
-1. `probability`
-2. 若沒有 probability，則 `count`
+會先變成：
 
-做排序。
+```text
+{"starred_actors", "directed_by"}
+```
 
-### 5.7 Same-arity rule selection
+如果某條 grammar rule 的 labels 是：
 
-接著在：
+```text
+{"starred_actors", "directed_by", "has_genre", "written_by"}
+```
 
-`_select_matched_rules(chain, top_k, require_same_arity=True)`
+那就算 match。
 
-會再做一層過濾：
+所以答案是：
 
-1. 優先只保留 `lhs.rank == len(chain)` 的 rule
+1. 不是逐 hop 逐 terminal 順序對
+2. 不是要求 RHS 剛好等於 chain
+3. 而是「去方向後，用 relation label 的 subset inclusion 來配」
 
-這是為了讓 grammar 更像：
+### 6.6 matching 後還會再做 same-arity 過濾
 
-1. 和目前 chain 長度一致的局部結構約束
+雖然一開始是 subset match，但後面 `_select_matched_rules()` 會優先保留：
 
-而不是使用一個很大、很泛的高頻鄰域 prior。
+```text
+lhs.rank == len(chain)
+```
 
-### 5.8 Candidate ranking：怎麼對多個 chain 排名
+也就是：
 
-這是 online 階段最關鍵的部分之一，對應：
+1. 2-hop chain 優先用 `rank=2` 的 rule
+2. 3-hop chain 優先用 `rank=3` 的 rule
 
-`_score_candidate(...)`
+如果有同 arity 的 match，就縮到這批。
 
-排序是用一個可解釋的 lexicographic tuple，不是單純線性分數。
+所以實際流程是：
 
-排序優先順序大致是：
+1. 先寬鬆 subset match
+2. 再用 chain 長度做 second-stage filter
+3. 再取 top-k rules
 
-1. `valid`
-   - 能不能在 KG 上完整執行
-2. `same_arity_hit`
-   - 是否有同 hop 長度的 grammar 支持
+### 6.7 如果第一輪 chain 全失敗，會做 fallback correction
+
+當所有 candidate 都 invalid 時，會進 fallback。
+
+fallback 有三種來源：
+
+1. 單 hop 方向翻轉
+2. grammar fallback
+3. 再叫一次 LLM 做 correction
+
+#### 方向翻轉例子
+
+原本：
+
+```text
+["written_by"]
+```
+
+可能改成：
+
+```text
+["written_by^-1"]
+```
+
+#### grammar fallback 例子
+
+如果原本 chain 的 bare labels 跟某條高頻規則有 overlap，系統會用那條規則的 labels 重組一條新 chain。
+
+這裡仍然不是完整圖匹配，而是 relation label 層級的重建。
+
+#### 這一步實際是怎麼組 correction pool 的
+
+真正程式順序在 `prepare_retrieval()` 中是：
+
+1. 先確認 `ranked_candidates` 裡沒有任何 `kb_result["valid"] == True`
+2. 對每個原始 candidate 產生 direction-flip 候選
+3. 如果有 grammar，對每個原始 candidate 產生 grammar fallback 候選
+4. 再呼叫 `_correct_candidates_with_llm()` 請 LLM 針對 failed candidates 提新 chain
+5. 把三路來源全部合併
+6. 用 `_dedup_candidates()` 依 `(entity, tuple(chain))` 去重
+7. 再逐條重跑 validity check、grammar score、ranking key
+
+也就是 correction 並不是「先 grammar，再 LLM」，而是：
+
+```text
+flip candidates
++ grammar fallback candidates
++ llm correction candidates
+-> dedup
+-> 全部重新評分
+```
+
+#### LLM correction prompt 到底允許改什麼
+
+`_correct_candidates_with_llm()` 明確允許 LLM：
+
+1. 改 relation 方向
+2. 換 relation
+3. 保持相同 hop 數優先
+4. 必要時整條 chain 換掉
+
+但是它也限制：
+
+1. 優先使用系統提供的 relation candidate set
+2. 必須只回 JSON array
+3. 最多取 `max_new_candidates=5`
+
+#### correction 的 source priority 怎麼影響排序
+
+`_score_candidate()` 裡，來源優先順序是：
+
+1. 原始 `llm` -> `source_priority = 3`
+2. `llm_correction` -> `2`
+3. `flip_hop_i` -> `1`
+4. `grammar_fallback` -> `0`
+
+這表示：
+
+1. 在其他條件接近時，系統仍偏好原始 parse
+2. LLM correction 比單純 flip 更被信任
+3. grammar fallback 是最弱先驗，只在前面都不夠好時才上位
+
+#### 委員可能會問：為什麼 grammar fallback 反而排最弱
+
+因為目前 grammar fallback 不是 exact derivation，只是：
+
+1. 根據 relation 共現規則取 labels
+2. 再用舊 chain 的方向資訊重建一條候選
+
+所以它的語義精確度沒有原始 LLM parse 或 LLM correction 高，程式設計上故意把它放成弱 prior。
+
+### 6.8 真正取 subgraph：先 spine，再看要不要 expansion
+
+若 candidate 通過 validity 檢查，接著 `_build_candidate_subgraph()` 會做：
+
+1. 先依 chain 嚴格走一次，拿到 `spine_edges`
+2. 如果開了 grammar expansion，再用 matched rule 擴張
+
+#### spine 是什麼
+
+spine 就是由 predicted chain 直接走出來的主路徑邊集合。
+
+例如：
+
+```text
+Tom_Hanks --starred_actors^-1--> Cast_Away --directed_by--> Robert_Zemeckis
+```
+
+這些邊就是 spine。
+
+#### spine 是怎麼抽的，不是怎麼想像的
+
+spine 由 `_find_subgraph_multi_hop_kb_strict()` 產生。
+
+做法是：
+
+1. frontier 初始為起始 entity
+2. 逐 hop 讀 chain 裡的 relation token
+3. 若 token 是正向 relation，就從 `kb_out[entity][rel]` 找 tails
+4. 若 token 是 `rel^-1`，就從 `kb_in[entity][rel]` 找 heads
+5. 每經過一條邊就累加到 `edge_counts`
+6. 下一 hop frontier 變成這些邊抵達的節點集合
+7. 若某 hop 之後 frontier 變空，就停止
+
+所以 spine 不是單一路徑，而是：
+
+1. 一條 predicted relation chain
+2. 在 KB 上可能對應到的整批可執行邊集合
+
+例如 2-hop chain 不一定只有 2 條 edge，而可能是：
+
+1. 第 1 hop 走出 8 條邊
+2. 第 2 hop 從這 8 個節點又走出 20 條邊
+3. 最後 spine 是這 28 條去重後的 edge 集合
+
+這點很重要，因為委員很容易誤以為 spine = 單一路徑，其實不是。
+
+#### grammar expansion 是什麼
+
+如果 matched rule 的 labels 還包含：
+
+1. `written_by`
+2. `has_genre`
+
+那系統會以 spine 上節點為中心，再把這些 relation 的鄰邊加進來。
+
+重點是：
+
+1. 不是把整條 grammar rule 還原成完整 bag graph
+2. 而是取 rule 裡的 label 集合作為 allowed relations
+3. 然後從 spine nodes 往外補邊
+
+#### GrammarExpansion 實際怎麼 expand
+
+`_expand_subgraph_by_grammar()` 的細節是：
+
+1. 先取 `matched_rules[:topk_expansion_rules]`
+2. 若 `expansion_strict=True`，再加一道過濾：
+   - 規則 `lhs.rank` 必須等於 `len(chain)`
+   - 規則分數 `prob/count` 必須 `>= expansion_min_prob`
+3. 將這些規則的 `_cached_labels` 聯集成 `allowed_rels`
+4. 從 `spine_edges` 蒐集所有 `spine_nodes`
+5. 對每個 spine node：
+   - 往外掃所有 outgoing relations
+   - 只保留 relation 在 `allowed_rels` 裡的邊
+   - 再掃所有 incoming relations
+   - 一樣只保留 relation 在 `allowed_rels` 裡的邊
+6. 用 `visited` 避免把 spine 已有邊重複加入
+7. 若 `expansion_strict=True`，每個 node 最多只擴 `expansion_per_node_cap` 條邊
+8. 最後若總 expanded edges 超過 `max_frontier`，再全域截斷
+
+#### GrammarExpansion 不是怎麼 expand
+
+它目前**不是**：
+
+1. 沿著 grammar rule 的 node index `a/b/att` 去做 graph unification
+2. 也不是在 bag attachment 上做真正 hyperedge substitution
+3. 也不是 exact HRG decoding
+
+它是：
+
+1. 用 grammar rule labels 當 allowed relation vocabulary
+2. 以 spine nodes 為中心擴一圈鄰邊
+
+#### 為什麼單跳題不做 expansion
+
+`_build_candidate_subgraph()` 裡有：
+
+```python
+is_single_hop = len(chain) == 1
+```
+
+只要是 single-hop：
+
+1. 不做 grammar expansion
+2. 不做 random expansion
+3. 不做 frequency expansion
+
+原因很直接：
+
+1. 1-hop 問題本來就應該用最短最直接的局部 evidence
+2. 再往外擴很容易只加噪音
+3. 壓縮方法的比較也會不公平
+
+#### GrammarGuidedRetrieval 跟 GrammarExpansion 不一樣
+
+這兩個很容易被混淆。
+
+`GrammarGuidedRetrieval` 是：
+
+1. 在取 spine 前就放寬 strict chain
+2. 改成 grammar-allowed BFS
+
+`GrammarExpansion` 是：
+
+1. 先照 strict chain 取 spine
+2. 再以 matched rule labels 向外補邊
+
+所以：
+
+1. 前者改的是 retrieval search space
+2. 後者改的是 spine 周邊 context 補充
+
+目前 benchmark 裡的 `Spine-GrammarExpansion-*` 與 `HRG-Proposed-*` 走的是後者，不是前者。
+
+#### GrammarGuidedRetrieval 實際怎麼做
+
+`_find_subgraph_grammar_guided()` 的步驟是：
+
+1. 先拿 matched rules
+2. 把前 `topk_expansion_rules` 的 labels 合成 `allowed_rels`
+3. `max_depth = len(chain)`
+4. 從起始 entity 做 BFS，但每一層都只允許走 `allowed_rels`
+5. outgoing / incoming 都會看
+6. 用 `visited_edges` 去重
+7. 用 `visited_nodes` 控制 frontier
+8. 每個 node 的擴張上限取決於：
+   - strict 模式時用 `expansion_per_node_cap`
+   - 否則用 `per_entity_cap`
+
+它比較像：
+
+```text
+chain 預測 relation 數量
++ grammar 規則限制 relation 類型
+-> constrained BFS
+```
+
+而不是：
+
+```text
+照 chain token 一跳一跳硬走
+```
+
+#### RandomExpansion 怎麼隨機
+
+`_expand_subgraph_random()` 不是每次都真的隨機到不可重現，而是「可重現隨機」。
+
+步驟是：
+
+1. 先取 `spine_nodes`
+2. 把 `random_expansion_seed`、`chain`、排序後的 `spine_nodes` 串成字串
+3. 對這個字串做 MD5
+4. 取前 8 碼轉成整數
+5. 用這個整數初始化 `random.Random(seed_int)`
+
+所以同一題、同一 chain、同一組 spine nodes：
+
+1. 每次都會抽到同樣的隨機邊
+2. 這樣實驗可重現
+
+之後對每個 spine node：
+
+1. 蒐集所有 outgoing candidate edges
+2. 蒐集所有 incoming candidate edges
+3. 去掉已在 spine 裡的邊
+4. shuffle candidate edges
+5. 取前 `expansion_per_node_cap` 條
+
+所以 RandomExpansion 的「隨機」來自：
+
+1. 候選邊先全列出
+2. 再隨機打散
+3. 然後固定取前 K 條
+
+#### FrequencyExpansion 的頻率是什麼，怎麼來
+
+`_compute_relation_frequency()` 在 agent 初始化時就會先掃整張 KB：
+
+1. 對 `kb_out` 每個 head
+2. 對其每個 relation
+3. 把該 relation 的 tail 數量加總
+
+所以 frequency 定義是：
+
+```text
+某個 relation 在整張 KB 中出現的 edge 總數
+```
+
+不是：
+
+1. 某個 rule 的出現次數
+2. 某個 question 中的局部頻率
+3. 某個實驗 batch 的使用次數
+
+#### FrequencyExpansion 實際怎麼選邊
+
+`_expand_subgraph_by_relation_frequency()` 會：
+
+1. 對每個 spine node 蒐集所有 outgoing/incoming candidate edges
+2. 每條候選邊附上該 relation 的全域頻率 `rel_freq`
+3. 對候選邊依 `(-rel_freq, edge_tuple)` 排序
+4. 取前 `expansion_per_node_cap` 條
+
+所以 FrequencyExpansion 的 bias 是：
+
+1. 偏好全域更常見的 relation
+2. 假設高頻 relation 比較可能提供一般性輔助上下文
+
+#### 委員可能會問：這樣不是很容易偏向 stopword relation 嗎
+
+是，這正是這個 ablation 的意義。
+
+它不是要證明最合理，而是要對照：
+
+1. 用 grammar 規則選 relation
+2. 跟用單純 relation 全域頻率選 relation
+3. 哪個比較好
+
+因此 FrequencyExpansion 的存在，本質上是 control condition。
+
+#### Proposed 到底是什麼
+
+`HRG-Proposed-*` 不是新的推理架構，而是 `KnowledgeGraphAgent` 打開下列開關的組合：
+
+1. `use_grammar_expansion = True`
+2. `use_fallback_correction = True`
+3. `use_grammar_rerank = False`
+4. `use_grammar_hint = False`
+5. `expansion_strict = True`
+6. `expansion_min_prob = 0.005`
+7. `expansion_per_node_cap = 5`
+
+也就是：
+
+```text
+Spine retrieval
++ strict grammar-based expansion
++ fallback correction
+```
+
+不是：
+
+1. grammar-first parsing
+2. grammar-guided BFS retrieval
+3. prompt-injected grammar hints
+
+這點口試很重要，因為名字叫 `HRG-Proposed` 很容易讓人誤會它用了所有 grammar 功能；其實這個 benchmark 裡的 proposed，是「嚴格 grammar expansion + correction」的組合版。
+
+#### 各方法對照表
+
+以 qwen3.5 為例，模型配置差異其實是：
+
+1. `Baseline-BFS-qwen3.5`
+   - 不看 chain
+   - 不看 grammar
+   - 直接以 entity 做雙向 BFS
+2. `Spine-Only-qwen3.5-{json|triple}`
+   - 用 LLM parse chain
+   - 嚴格照 chain 取 spine
+   - 不 correction
+   - 不 expansion
+3. `Spine-Correction-qwen3.5-{json|triple}`
+   - Spine-Only
+   - 再加 fallback correction
+4. `Spine-GrammarExpansion-qwen3.5-{json|triple}`
+   - Spine-Only
+   - 再加 grammar expansion
+   - 不 correction
+5. `Spine-RandomExpansion-qwen3.5-{json|triple}`
+   - Spine-Only
+   - 再加 random expansion
+6. `Spine-FrequencyExpansion-qwen3.5-{json|triple}`
+   - Spine-Only
+   - 再加 frequency expansion
+7. `HRG-Proposed-qwen3.5-{json|triple}`
+   - Spine-Only
+   - 加 grammar expansion
+   - 加 correction
+   - expansion 用 strict mode
+
+#### Candidate ranking 怎麼排，不是黑盒
+
+`_score_candidate()` 是 lexicographic tuple，優先序固定如下：
+
+1. `valid`：KB 上能不能完整走通
+2. `same_arity_hit`：有沒有 match 到 hop 數相同的 grammar rule
 3. `grammar_hit`
-   - 是否有 grammar 支持
 4. `grammar_score`
-   - grammar match 強度
 5. `grammar_matched_count`
-   - 匹配到多少 rule
 6. `failure_progress`
-   - 若失敗，是在哪一 hop 才失敗
 7. `step_survival`
-   - 每一 hop 的 frontier 存活程度
 8. `final_size`
-   - 最後 frontier 大小
 9. `source_priority`
-   - 來源是原始 LLM、correction、flip 或 grammar fallback
 10. `llm_confidence`
 11. `llm_prior`
 
-這意味著：
+這代表：
 
-1. 可執行性優先於表面語意合理性
-2. grammar compatibility 是次要但重要的 tie-breaker
-3. LLM 原始排序與 confidence 只放在比較後面
+1. 先求能不能走通
+2. 再求 grammar 相容
+3. 再看若失敗，是失敗在第幾 hop
+4. 最後才用 LLM 自己的信心當 tie-breaker
 
-### 5.9 Correction：當第一輪候選全失敗時怎麼補救
+所以這不是單純「信 LLM」，而是明確地把 KB executability 擺在最前面。
 
-如果第一輪所有 candidate 都失敗，且 `use_fallback_correction=True`，程式會啟動 correction。
+#### Subgraph ranking 怎麼排
 
-目前 correction pool 來源有三種：
+即便多條 chain 都 valid，也不是直接選第一條。
 
-#### 1. Direction flip
+每條 valid chain 都會先 build 一個 subgraph，然後用 `_score_subgraph_candidate()` 再排一次。
 
-`_make_direction_flip_candidates(entity, chain)`
-
-做法是：
-
-1. 對 chain 中每一 hop 各自翻轉方向一次
-2. 例如 `written_by` ↔ `written_by^-1`
-
-#### 2. Grammar fallback
-
-`_make_grammar_fallback_candidates(entity, chain, top_k=5)`
-
-做法是：
-
-1. 先找與原始 chain 相關的 grammar rules
-2. 若找不到，就退化用 top frequent rules
-3. 從 rule 的 label set 中重建一條較合理的 relation sequence
-4. 若某個 bare relation 在原 chain 裡出現過，就盡量保留原來方向
-
-#### 3. LLM correction
-
-`_correct_candidates_with_llm(...)`
-
-做法是：
-
-1. 把失敗候選與題目重新丟給 LLM
-2. 請它修正 entity / chain
-3. 再把結果併回 correction pool
-
-最後 correction pool 也會做去重，然後和原始 candidate 一起重排。
-
-### 5.10 選到 valid chain 後，怎麼建 strict spine
-
-當有 candidate 被判定為 valid，就會建立對應 subgraph。
-
-如果不是 grammar-guided retrieval 模式，主路徑是：
-
-`_find_subgraph_multi_hop_kb_strict(start_entity, relation_chain)`
-
-做法是：
-
-1. frontier 初始化為起點 entity
-2. 對每一 hop relation：
-   - 只沿著這個 relation 走
-   - 收集符合該 relation 的邊
-   - 更新 next frontier
-3. 所有被走過的 edge 形成 strict spine
-
-這個 subgraph 只有 chain 指定的邊，不含自由補邊。
-
-### 5.11 Grammar-guided expansion：怎麼從 spine 擴張
-
-對應：
-
-`_expand_subgraph_by_grammar(spine_edges, matched_rules, chain)`
-
-流程如下：
-
-1. 從 matched rules 中選 top-k rules
-2. 若 `expansion_strict=True`
-   - 只保留 `lhs.rank == len(chain)` 的 rules
-   - 且其 `probability/count >= expansion_min_prob`
-3. 將這些 rule 的 `_cached_labels` 合併成 `allowed_rels`
-4. 取所有出現在 spine 裡的節點 `spine_nodes`
-5. 對每個 spine node：
-   - 檢查 `kb_out` 中 relation 是否屬於 `allowed_rels`
-   - 檢查 `kb_in` 中 relation 是否屬於 `allowed_rels`
-6. 只把符合 allowed relation 的局部邊補進來
-7. 每個 spine node 最多加入 `expansion_per_node_cap` 條邊
-
-所以 grammar expansion 不是重新跑 BFS，而是：
-
-**以 spine 為中心，只補 grammar 覺得合理的局部關係邊**
-
-### 5.12 Random expansion：對照組怎麼做
-
-對應：
-
-`_expand_subgraph_random(spine_edges, chain)`
-
-流程是：
-
-1. 收集 spine_nodes
-2. 對每個 node 蒐集其所有 local candidate edges
-3. 用固定 seed 與 chain/states 生成可重現亂數
-4. shuffle candidate edges
-5. 每個 node 只取前 `expansion_per_node_cap` 條
-
-這個設計的重點是：
-
-1. 和 grammar expansion 用同樣的 local edge budget
-2. 但完全不依賴 HRG
-
-### 5.13 Subgraph ranking：不只比 chain，還要比建出來的 subgraph
-
-當 valid candidate 都建好 subgraph 之後，還會做第二層排序：
-
-`_score_subgraph_candidate(chain_row, subgraph, has_references)`
-
-這一步考慮的因素包括：
+排序依據是：
 
 1. `has_edges`
 2. `same_arity_hit`
@@ -948,565 +899,1143 @@ Developer prompt 會要求 LLM 輸出 JSON array，每個物件包含：
 4. `grammar_score`
 5. `spine_size`
 6. `expanded_size`
-7. `compactness`
-8. 原始 chain ranking key
+7. `compactness = -subgraph_size`
+8. 原始 candidate ranking key
 
-其中：
+這裡一個容易被忽略的點是：
 
-1. 更小的 subgraph 在支持品質相近時會比較被偏好
-2. 這使得方法不只是追求多抓邊，而是追求較精簡且有支撐力的 context
+1. 當支持品質差不多時，系統偏好較小的 subgraph
+2. 所以不是越多邊越好
+3. 它在 retrieval 階段就已經內建 compression bias
 
-### 5.14 Serialization：最後送進 LLM 前怎麼表示 subgraph
+#### shared retrieval cache 是什麼
 
-對應：
+`benchmark.py` 對同 backbone 的 `json/triple` 兩個版本，不會重做兩次 retrieval。
 
-`_serialize_edges(edges)`
+它會先根據：
 
-目前兩種格式為：
+1. `base_model_name`
+2. `dataset_name`
+3. `run_tag`
+4. `agent_kwargs`（扣掉 serialization）
 
-1. `triples`
-   - 格式如：`head relation tail.`
-2. `json`
-   - 直接把 edge list 轉成 JSON string
+組出一個 hash key，存成：
 
-### 5.15 Answer generation：最後一輪 LLM 怎麼回答
-
-對應：
-
-`_generate_rag_response(user_prompt, context_json)`
-
-Developer prompt 會要求模型：
-
-1. 只能依據 Context 回答
-2. 不要輸出 reasoning
-3. 不要輸出 markdown
-4. 多答案時用 ` | ` 連接
-5. 若 context 不足，輸出 `I don't know`
-
-也就是說，online 階段其實有兩輪 LLM：
-
-1. 第一輪：semantic parsing / candidate chain generation
-2. 第二輪：讀取最終子圖並輸出答案
-
-### 5.16 Token 與 latency 是怎麼記錄的
-
-目前 agent 會分別記錄：
-
-1. `parse1_tokens`
-   - 第一輪 candidate parsing
-2. `correction_tokens`
-   - correction prompt 開銷
-3. `parse2_tokens`
-   - 最終 answer generation
-4. `context_tokens`
-   - 子圖序列化後的 context 長度估計
-
-時間則分成：
-
-1. `parse_latency`
-2. `retrieval_latency`
-3. `generation_latency`
-
-這樣之後不只能比較答案，也能比較整體成本。
-
-## 6. 目前 Benchmark 矩陣
-
-### 6.1 Backbone 模型
-
-目前 benchmark 透過一個模型陣列自動展開所有固定方法。模型定義在：
-
-1. [portable_runner/LLM_inference_benchmark/benchmark.py](/home/zihui/projects/masterPaperRemake/portable_runner/LLM_inference_benchmark/benchmark.py)
-
-目前 backbone 包括：
-
-1. `meta-llama/Llama-3.1-8B-Instruct`
-2. `Qwen/Qwen2.5-7B-Instruct`
-
-之後若要新增模型，只需要在 `MODEL_BACKBONES` 陣列中新增一個項目，不需要重寫整個 benchmark matrix。
-
-### 6.2 Baseline
-
-目前非 HRG 基線為：
-
-1. `Baseline-BFS-{backbone}`
-
-它使用 BFS 類 retrieval，並由 benchmark 提供 oracle hop depth。
-
-### 6.3 核心消融實驗
-
-目前每個 backbone 都會自動展開以下方法：
-
-1. `Spine-Only-{backbone}-{json,triple}`
-2. `Spine-Correction-{backbone}-{json,triple}`
-3. `Spine-GrammarExpansion-{backbone}-{json,triple}`
-4. `Spine-RandomExpansion-{backbone}-{json,triple}`
-5. `Spine-FrequencyExpansion-{backbone}-{json,triple}`
-6. `HRG-Proposed-{backbone}-{json,triple}`
-
-也就是說，現在可以同時比較：
-
-1. 方法消融
-2. serialization 消融
-3. backbone 消融
-
-### 6.4 各方法的意義
-
-#### Spine-Only
-
-啟用：
-
-1. LLM semantic parsing
-2. strict spine retrieval
-
-關閉：
-
-1. correction
-2. grammar expansion
-3. random expansion
-
-用途：
-
-1. 作為最乾淨的 chain-first 下界基線
-
-#### Spine-Correction
-
-啟用：
-
-1. LLM semantic parsing
-2. correction
-3. strict spine retrieval
-
-關閉：
-
-1. grammar expansion
-2. random expansion
-
-用途：
-
-1. 單獨量化 correction 的貢獻
-
-#### Spine-GrammarExpansion
-
-啟用：
-
-1. LLM semantic parsing
-2. strict spine retrieval
-3. grammar-guided expansion
-
-關閉：
-
-1. correction
-2. random expansion
-
-用途：
-
-1. 單獨量化 grammar-based local context completion 的貢獻
-
-#### Spine-RandomExpansion
-
-啟用：
-
-1. LLM semantic parsing
-2. strict spine retrieval
-3. random local expansion
-
-關閉：
-
-1. correction
-2. grammar-guided expansion
-
-用途：
-
-1. 驗證 HRG 是否真的優於 naive expansion
-
-#### Spine-FrequencyExpansion
-
-啟用：
-
-1. LLM semantic parsing
-2. strict spine retrieval
-3. relation-frequency-guided expansion
-
-關閉：
-
-1. correction
-2. grammar-guided expansion
-3. random expansion
-
-用途：
-
-1. 回答「HRG 的效果是否只是因為用了 relation 頻率資訊」
-2. 建立比 random expansion 更強的對照組
-
-具體做法是：
-
-1. 先統計整張 KG 中各 relation 的全域出現次數
-2. 對每個 spine node 收集其可擴張邊
-3. 依 relation 全域頻率由高到低排序
-4. 在與 HRG expansion 相同的 `expansion_per_node_cap` 預算下保留前幾條
-
-因此這個方法不是看結構樣板，只看 relation popularity。
-
-#### HRG-Proposed
-
-啟用：
-
-1. LLM semantic parsing
-2. correction
-3. strict spine retrieval
-4. grammar-guided expansion
-
-用途：
-
-1. 評估完整主方法
-
-### 6.5 為什麼 Random Expansion 很重要
-
-如果沒有 `Spine-RandomExpansion`，委員或審稿人很容易質疑：
-
-1. 你變好是不是只是因為多加了邊
-2. 並不是 HRG 本身有幫助
-
-因此 Random Expansion 的存在，是為了建立一個更乾淨的對照：
-
-1. 同樣的 expansion budget
-2. 沒有 HRG 指導
-3. 可以直接比較「多加邊」和「有結構地加邊」的差異
-
-而 `Spine-FrequencyExpansion` 更進一步回答：
-
-1. 若只用 relation 頻率，而不用 HRG 結構樣板，效果是否已經足夠
-2. 若 HRG 仍優於 frequency expansion，才更能說明 HRG 捕捉到的不只是統計頻率，而是更有用的局部圖結構
-
-## 7. 評估指標
-
-### 7.1 主要答案指標
-
-目前 benchmark 主要輸出：
-
-1. `em`
-2. `answer_set_f1`
-3. `answer_recall`
-4. `hit_at_1_any`
-
-含義如下：
-
-#### EM
-
-1. 對單答案題：等同 exact match
-2. 對多答案題：要求整組答案完全一致
-
-#### Answer-Set F1
-
-1. 用於多答案題最重要
-2. 會同時懲罰漏答與亂答
-
-#### Answer Recall
-
-這是目前原本 `acc` 重新定義後的版本：
-
-1. 對單答案題：0 或 1
-2. 對多答案題：`命中的 gold 答案數 / gold 答案總數`
-
-例如 gold 有 4 個答案，模型答對其中 3 個，則：
-
-`answer_recall = 0.75`
-
-#### Hit@1-any
-
-1. 只要至少命中一個 gold answer 就算 1
-2. 屬於較寬鬆的輔助指標
-
-### 7.2 輔助答案指標
-
-benchmark 另外還保留：
-
-1. `answer_set_precision`
-2. `answer_set_recall`
-3. `bleu`
-4. `contains_hit`
-
-其中：
-
-1. `BLEU` 仍保留，但不建議作為 KGQA 主指標
-2. `contains_hit` 保留在 JSON 裡以維持相容性，但已不再作為主表重點
-
-### 7.3 答案切分規則
-
-目前多答案切分採較保守設計，只切：
-
-1. `|`
-2. `;`
-3. 換行
-
-不再預設使用逗號切分，以避免像：
-
-1. `Washington, D.C.`
-2. 某些複雜片名
-
-這種合法答案被錯切。
-
-### 7.4 效率指標
-
-目前 benchmark 同時記錄：
-
-1. `avg_latency`
-2. `avg_parse_latency`
-3. `avg_retrieval_latency`
-4. `avg_generation_latency`
-5. `avg_ctx_tokens`
-6. `avg_parse1_tokens`
-7. `avg_correction_tokens`
-8. `avg_parse2_tokens`
-9. `avg_subgraph_size`
-10. `answerable_rate`
-11. `generation_failure_count`
-
-### 7.5 Retrieval 指標
-
-在有 reference answer 的資料集上，也會統計：
-
-1. `avg_retrieval_recall`
-2. `avg_retrieval_precision`
-3. `avg_retrieval_f1`
-
-這些指標的重要性在於，它能幫助區分：
-
-1. retrieval 本身做得好不好
-2. 最後答案生成是否因 LLM 回答階段而失真
-
-## 8. Artifact 與輸出目錄
-
-### 8.1 資料與輸出規則
-
-目前 portable workflow 已經正規化為：
-
-1. 資料集固定放在 `portable_runner/Datasets/...`
-2. 所有產出固定放在 `portable_runner/artifacts/<run_tag>/...`
-
-### 8.2 每個 run tag 的輸出
-
-對每個 run tag，目前會產生：
-
-1. grammar
-   - `artifacts/<run_tag>/grammar/`
-2. benchmark result JSON
-   - `artifacts/<run_tag>/results/benchmark_results.json`
-3. detail CSV
-   - `artifacts/<run_tag>/results/all_models_outputs_wide.csv`
-4. dump / shared retrieval caches
-   - `artifacts/<run_tag>/dumps/`
-
-### 8.3 Batch summary
-
-整批執行後的摘要會寫在：
-
-1. `artifacts/_batch/run_all_summary.txt`
-
-## 9. 一次完整 run 的實際流程
-
-對單一資料集而言，完整流程大致如下：
-
-1. 建立或啟用 Python 環境
-2. 安裝依賴
-3. 下載並正規化資料集
-4. 固定資料路徑與 KB 路徑
-5. 根據 dataset / split 生成 `run_tag`
-6. 依據該 dataset 的 KB 生成 grammar JSON / TXT
-7. 載入 benchmark split
-8. 初始化 baseline 與 KG agents
-9. 對每個問題：
-   - 產生 candidate chain
-   - 檢查可執行性
-   - 必要時做 correction
-   - 建 strict spine
-   - 視設定做 grammar 或 random expansion
-   - 序列化成 `json` 或 `triples`
-   - 用 LLM 生成答案
-   - 計算 answer / retrieval / efficiency 指標
-10. 聚合成 dataset-level 與 model-level 報告
-11. 輸出結果 JSON、CSV、dump、grammar
-
-## 10. 目前比較安全的詮釋邊界
-
-### 10.1 可以合理主張的部分
-
-目前整套流程較能支撐以下主張：
-
-1. HRG 可作為 offline structural prior 用於 KGQA retrieval
-2. chain-first retrieval 搭配局部 expansion，有機會在答案品質與 context 成本之間取得較好平衡
-3. grammar-guided expansion 可以和 random expansion 在相同 budget 下做直接比較
-4. `json` 與 `triples` 可作為 LLM-facing serialization choice 進行效率與效果比較
-
-### 10.2 需要保守表述的部分
-
-以下幾點應保守處理：
-
-1. `KQAPro` 是 adapted setting，不是完全原生 benchmark
-2. 跨資料集做單一總平均不夠穩，dataset-wise analysis 更安全
-3. `json vs triple` 比較的是 LLM serialization 與 prompt 表達效果，不是理論上 KG formalism 的絕對優劣
-4. 一些 offline 參數本質上是 heuristic / budget-control，而不是數學上最優值
-
-### 10.3 容易看起來像 magic number 的參數
-
-目前最容易被質疑為 heuristic 的值包括：
-
-1. `K_SAMPLES = 4`
-2. `S_SAMPLE_SIZE = 500`
-3. `SEED_DEGREE_QUANTILE = 0.80`
-4. `BFS_MAX_BRANCH = 30`
-5. `topk_expansion_rules = 1`
-6. `expansion_min_prob = 0.005`
-7. `expansion_per_node_cap = 5`
-
-對這些值，較安全的說法是：
-
-1. 它們是 computation-control / context-budget control 設定
-2. 它們是保守預設
-3. 它們不是理論最優解的宣稱
-
-## 11. 輔助分析：HRG 必要性與 Sampling 穩定性
-
-### 11.1 HRG 必要性分析
-
-為了回應「你的方法是否只是利用頻率資訊，而不是利用圖結構」這個質疑，現在流程中已加入：
-
-1. `Spine-RandomExpansion`
-2. `Spine-FrequencyExpansion`
-
-三者可形成一條更完整的證據鏈：
-
-1. `Random Expansion`
-   - 沒有結構，沒有頻率
-2. `Frequency Expansion`
-   - 有全域 relation 頻率，但沒有 HRG 結構
-3. `Grammar Expansion / HRG-Proposed`
-   - 有結構樣板與局部圖樣約束
-
-因此，若 `HRG-Proposed` 明顯優於 `FrequencyExpansion`，就比較能支持：
-
-1. HRG 的幫助不只是因為用了 relation 頻率
-2. 而是因為它保留了更有辨識力的局部結構模式
-
-### 11.2 Sampling 穩定性分析
-
-為了回答「只抽 4 個 BFS sample、每個 500 節點，是否能代表整張 KG」這個問題，portable workflow 現在補了一個專門腳本：
-
-1. [portable_runner/grammar_stability_analysis.py](/home/zihui/projects/masterPaperRemake/portable_runner/grammar_stability_analysis.py)
-
-這個腳本可直接對同一個 KG：
-
-1. 用不同 random seed 重複生成 grammar
-2. 比較不同 seed 下 top-N rules 的 signature overlap
-3. 比較不同 seed 下 top-N relation label 的 overlap
-
-### 11.3 Stability script 實際做什麼
-
-`grammar_stability_analysis.py` 會：
-
-1. 載入同一份 KG
-2. 對多個 seed 分別呼叫 `learn_phrg_from_k_bfs_samples(...)`
-3. 對每份 grammar：
-   - 統計 rule 數量
-   - 取 top-N rules
-   - 把 rule 轉成 signature
-   - 收集 top-N rule 內出現的 relation labels
-4. 對任兩個 seed：
-   - 計算 top-rule signature Jaccard overlap
-   - 計算 top-label Jaccard overlap
-5. 將結果輸出成 JSON
-
-### 11.4 Stability script 範例
-
-可直接執行：
-
-```bash
-cd portable_runner
-python3 grammar_stability_analysis.py \
-  --kb-path Datasets/MetaQA/kb.txt \
-  --seeds 0 1 2 \
-  --k-samples 4 \
-  --sample-size 500 \
-  --top-n 100
+```text
+artifacts/<run_tag>/dumps/_shared_retrieval/<share_key>/q_0000.prepared.pkl
 ```
 
-預設輸出位置為：
+這表示：
 
-1. `portable_runner/artifacts/_analysis/grammar_stability.json`
+1. `Spine-Only-qwen3.5-json` 跟 `Spine-Only-qwen3.5-triple`
+2. 用的是同一份 prepared retrieval
+3. 差別只在最後 context serialization 與 answer generation
 
-### 11.5 這份分析能回答什麼
+這樣做的理由是：
 
-它不能直接證明 sample grammar 完全代表整張 KG，但它可以補兩個很重要的輔助證據：
+1. 讓 json/triple 的比較更公平
+2. 避免 retrieval 階段隨機性或重跑差異污染比較
+3. 減少重複成本
 
-1. 不同 seed 下，top structural rules 是否穩定
-2. 不同 seed 下，抽到的 relation pattern 是否高度重疊
+#### Baseline 跟 spine 系列的本質差異
 
-若 overlap 很高，就可以說：
+baseline 在 [baseline.py](/home/zihui/projects/masterPaperRemake/portable_runner/LLM_inference_benchmark/baseline.py) 裡的做法是：
 
-1. 在目前的採樣設定下，grammar 並不是完全 seed-sensitive 的偶然結果
-2. 抽樣結果至少對高頻局部樣板有一定穩定性
+1. 只抽 entity，不抽 chain
+2. 直接做雙向 BFS
+3. 深度由題目 hop 數決定
+4. outgoing/incoming 全收
+5. 每 hop 可做 edge cap
 
-## 12. 結果呈現建議
+所以 baseline 的 retrieval space 是：
 
-### 11.1 建議以資料集分開比較
+```text
+entity-centered unguided BFS neighborhood
+```
 
-目前最穩妥的論文寫法，不是強調四個資料集做單一總排名，而是：
+而 spine / grammar 系列是：
 
-**每個 dataset 內部做完整比較**
+```text
+entity + predicted relation chain centered retrieval
+```
 
-這樣的好處是：
+這就是為什麼 baseline 通常：
 
-1. `KQAPro` 的 adapted setting 不會污染其他資料集
-2. metric 定義爭議較小
-3. 不同資料集的 KG 結構與答案型態差異不會被硬平均掉
+1. recall 比較高
+2. context 比較大
+3. subgraph size 也比較大
 
-### 11.2 每個資料集內建議呈現的內容
+#### 委員可能追問的幾個真正敏感點
 
-對每個 dataset，可重點呈現：
+1. `grammar_score` 現在其實直接用 `count/probability`，沒有做 dataset-size normalization
+2. `expansion_min_prob=0.005` 在目前 grammar JSON 裡實際上常常等價於「count 門檻非常低」，因為 extractor 存的是 `count`
+3. grammar matching 用的是 relation set inclusion，不是 exact ordered chain match
+4. grammar expansion 用的是 label union，而不是 RHS attachment-structure preserving expansion
+5. retrieval precision / recall 是以 subgraph node 是否涵蓋 gold answer 來算，不是 edge-level metric
+6. `coverage` 的定義是 grammar hit 題數 / total questions，不是答案答對率
+7. `answerable_rate` 在目前程式裡幾乎等於輸出字串是否非空，所以很多失敗題仍可能算 answerable
 
-1. 答案指標
-   - `EM`
-   - `Answer-Set F1`
-   - `Answer Recall`
-2. 效率指標
-   - `Avg Context Tokens`
-   - `Avg Latency`
-   - `Avg Subgraph Size`
-3. Retrieval 指標
-   - `Subgraph Recall`
-   - `Subgraph Precision`
-   - `Subgraph F1`
-4. Serialization 比較
-   - `json`
-   - `triples`
+這幾點若先寫清楚，口試時比較不會被抓到說法太泛。
 
-## 13. 快取與可攜性
+### 6.9 context 序列化成 JSON 或 triples
 
-目前模型與相關快取不再寫到機器預設的 `~/.cache`，而是固定在目前資料夾下：
+同一個 retrieval 結果，會做兩種 serialization：
 
-1. `portable_runner/.cache/huggingface/`
-2. `portable_runner/.cache/torch/`
-3. `portable_runner/.cache/nltk/`
+1. `json`
+2. `triples`
 
-這樣做的目的，是讓整個 `portable_runner` 更容易整包搬到其他機器上使用，也讓 cache 行為更可控。
+#### 例子
 
-## 14. 總結
+JSON：
 
-目前的 portable workflow 已經不是單純的 demo runner，而是一套相對完整、可分析的 benchmark pipeline。它目前具備：
+```json
+[{"head":"Cast Away","relation":"directed_by","tail":"Robert Zemeckis","count":1}]
+```
 
-1. 固定資料集路徑管理
-2. offline grammar generation
-3. adapted KQAPro support
-4. training-free online KGQA inference
-5. backbone comparison
-6. 方法消融
-7. serialization comparison
-8. answer / retrieval / token / latency 多面向指標
+Triple：
 
-因此，現在這套系統最適合支撐的論文敘事是：
+```text
+Cast Away directed_by Robert Zemeckis.
+```
 
-1. offline 圖結構先驗抽取
-2. online chain-first constrained retrieval
-3. correction 與 expansion 的可拆解貢獻
-4. grammar-guided vs random expansion 的對照
-5. 效果與成本之間的 trade-off 分析
+### 6.10 最後才是 answer generation
+
+生成答案時，LLM 被要求：
+
+1. 只能用 Context
+2. 只能輸出最後答案
+3. 多答案用 ` | ` 串接
+4. 沒有答案就輸出 `I don't know`
+
+這一步的輸出才會拿去跟 gold answer 算 EM / F1 / recall。
+
+---
+
+## 7. `benchmark_results.json` 每個欄位怎麼來
+
+這個檔案是以「模型名」為 key。
+
+例如：
+
+```json
+"HRG-Proposed-qwen3.5-json@kqapro-validation": { ... }
+```
+
+每個模型底下有兩層數字。
+
+### 7.1 `results`
+
+`results` 是分 hop 的平均值。
+
+例如 KQAPro baseline：
+
+```json
+"results": {
+  "1-hop": {...},
+  "2-hop": {...},
+  "3-hop": {...}
+}
+```
+
+### 7.2 外層同名欄位
+
+外層的：
+
+1. `bleu`
+2. `answer_recall`
+3. `em`
+4. `answer_set_f1`
+5. `avg_latency`
+
+是對該模型所有 dataset split 結果再做一次平均後得到的 overall。
+
+### 7.3 指標意義
+
+#### `answer_recall`
+
+如果 gold 只有 1 個答案，這其實近似單答案正確率。
+
+如果 gold 有多個答案，就是候選答案集合對 gold 集合的覆蓋率。
+
+#### `em`
+
+1. 單答案時，等於答對或答錯
+2. 多答案時，要求 candidate set 與 gold set 完全相等
+
+#### `contains_hit`
+
+只要 raw output 字串裡包含任一 gold 字串就算命中。
+
+#### `hit_at_1_any`
+
+把 output 切成候選答案集合後，只要和 gold set 有交集就算 1。
+
+#### `answer_set_precision / recall / f1`
+
+這三個是 set-based 指標。
+
+### 7.4 retrieval 與成本相關欄位
+
+1. `coverage`: 有 grammar hit 的題目比例
+2. `avg_ctx_tokens`: 平均 context token 量
+3. `avg_parse1_tokens`: 第一次 parse 花的 token
+4. `avg_correction_tokens`: correction 花的 token
+5. `avg_parse2_tokens`: 最終答案生成花的 token
+6. `avg_subgraph_size`: 最終 subgraph 邊數
+7. `avg_retrieval_recall / precision / f1`: subgraph 與 gold answer 的對齊情況
+8. `avg_parse_latency / avg_retrieval_latency / avg_generation_latency`
+9. `answerable_rate`
+10. `generation_failure_count`
+11. `failure_counts`
+
+### 7.5 `failure_counts` 是怎麼計的
+
+每題都會被標一個 `failure_stage`，例如：
+
+1. `ok`
+2. `retrieval_empty`
+3. `no_valid_chain`
+4. `no_candidates`
+5. `runtime_error`
+6. `oom`
+
+最後把各題計數加總，就變成 `failure_counts`。
+
+#### 例子
+
+WikiMovies `Baseline-BFS-qwen3.5`：
+
+```json
+"failure_counts": {
+  "retrieval_empty": 94,
+  "ok": 6
+}
+```
+
+表示 100 題裡：
+
+1. 94 題在 retrieval 就空掉
+2. 6 題至少有正常進到 `ok`
+
+### 7.6 `compression_vs_bfs_*` 怎麼算
+
+這兩個欄位是 benchmark 後處理算的：
+
+1. `compression_vs_bfs_ctx_ratio = 本模型 avg_ctx_tokens / 同 backbone baseline 的 avg_ctx_tokens`
+2. `compression_vs_bfs_subgraph_ratio = 本模型 avg_subgraph_size / 同 backbone baseline 的 avg_subgraph_size`
+
+所以：
+
+1. 小於 1 代表比 baseline 更壓縮
+2. 越小表示 context/subgraph 越短
+
+---
+
+## 8. `all_models_outputs_wide.csv` 每一格存的是什麼
+
+這個檔不是只有答案字串，而是**每個模型對每一題的完整 payload JSON**。
+
+欄位大致是：
+
+1. `hop`
+2. `dataset`
+3. `idx`
+4. `question`
+5. `expected_outputs`
+6. 每個模型一欄
+
+而每個模型欄裡裝的是：
+
+```json
+{
+  "answer": "...",
+  "bleu": 0.0,
+  "answer_recall": 0.0,
+  "em": 0.0,
+  "elapsed": 1.23,
+  "failure_stage": "no_valid_chain",
+  "parse_latency": ...,
+  "retrieval_latency": ...,
+  "generation_latency": ...,
+  "generation_failed": false,
+  "answerable": true
+}
+```
+
+### 實際例子
+
+WikiMovies 第 0 題：
+
+1. `question = "what does Grégoire Colin appear in?"`
+2. `expected_outputs = "Before the Rain"`
+
+同一題在不同模型欄位中，可以看到：
+
+1. 有些模型 `failure_stage = retrieval_empty`
+2. 有些模型 `failure_stage = no_valid_chain`
+3. 有些模型 `failure_stage = no_candidates`
+
+所以這個 CSV 的真正用途是：
+
+1. 對齊同一題在不同模型的失敗型態
+2. 檢查是 parse 掛掉、chain 不可走、還是 retrieval 空掉
+3. 做 qualitative error analysis
+
+---
+
+## 9. 三個已跑完 artifacts 的結果要怎麼看
+
+下面只抓最有代表性的現象。
+
+### 9.0 先看一組統一比較口徑
+
+下面的數字若沒有特別註明，主要以 `qwen3.5` backbone 為例，因為：
+
+1. 三組 artifact 都有完整的 `qwen3.5` 結果
+2. 它同時覆蓋 baseline、spine、correction、grammar expansion、random/frequency、proposed
+3. 最適合作為方法對照主軸
+
+建議口試時固定先講這 6 個欄位：
+
+1. `answer_recall`
+2. `em`
+3. `avg_ctx_tokens`
+4. `avg_subgraph_size`
+5. `coverage`
+6. `failure_counts`
+
+因為這 6 個欄位能同時回答：
+
+1. 答案效果
+2. 壓縮程度
+3. grammar 有沒有真的介入
+4. 失敗主要卡在哪一段
+
+### 9.0.1 WikiMovies `qwen3.5` 主要方法對照
+
+| Method | Answer Recall | EM | Avg Ctx Tokens | Avg Subgraph Size | Coverage | 主要 Failure |
+|---|---:|---:|---:|---:|---:|---|
+| Baseline-BFS | 0.0305 | 0.03 | 2.02 | 0.14 | 0.00 | `retrieval_empty=94, ok=6` |
+| Spine-Only-json | 0.0305 | 0.03 | 0.86 | 0.04 | 0.00 | `no_valid_chain=96, ok=4` |
+| Spine-Correction-json | 0.0305 | 0.03 | 0.86 | 0.04 | 0.00 | `no_valid_chain=96, ok=4` |
+| Spine-GrammarExpansion-json | 0.0205 | 0.02 | 0.67 | 0.03 | 0.03 | `no_valid_chain=97, ok=3` |
+| HRG-Proposed-json | 0.0205 | 0.02 | 0.67 | 0.03 | 0.03 | `no_valid_chain=97, ok=3` |
+
+這組數字最重要的結論是：
+
+1. baseline 與 spine-only 在 answer recall/EM 幾乎打平
+2. 但 baseline 的失敗型態是 `retrieval_empty`
+3. spine 系列的失敗型態主要轉成 `no_valid_chain`
+4. grammar expansion 與 proposed 在 WikiMovies 上沒有把主效果拉起來
+5. 反而只看得到少量 `coverage=0.03` 的 grammar 介入痕跡
+
+### 9.0.2 MLPQ `qwen3.5` 主要方法對照
+
+| Method | Answer Recall | EM | Avg Ctx Tokens | Avg Subgraph Size | Coverage | 主要 Failure |
+|---|---:|---:|---:|---:|---:|---|
+| Baseline-BFS | 0.335 | 0.25 | 6200.835 | 418.14 | 0.00 | `ok=200` |
+| Spine-Only-json | 0.06 | 0.03 | 66.365 | 2.795 | 0.00 | `no_valid_chain=152, ok=48` |
+| Spine-Correction-json | 0.06 | 0.03 | 67.22 | 2.835 | 0.00 | `no_valid_chain=150, ok=50` |
+| Spine-GrammarExpansion-json | 0.025 | 0.02 | 157.595 | 6.17 | 0.075 | `no_valid_chain=168, ok=32` |
+| HRG-Proposed-json | 0.045 | 0.04 | 421.34 | 16.185 | 0.135 | `no_valid_chain=154, ok=46` |
+
+這組數字很適合回答「你的方法到底在 trade off 什麼」：
+
+1. baseline 的 `answer_recall=0.335` 最好
+2. 但它付出的代價是 `avg_ctx_tokens=6200.835`、`avg_subgraph_size=418.14`
+3. spine-only 把 context 壓到 66 左右，只有 baseline 的約 `1.07%`
+4. proposed 把 context 拉回 `421.34`，仍只有 baseline 的約 `6.79%`
+5. proposed 的 subgraph 大小 `16.185`，也遠小於 baseline 的 `418.14`
+
+所以在 MLPQ 上最精確的說法不是「proposed 最準」，而是：
+
+1. proposed 在極端壓縮與極端大型 context 之間提供中間點
+2. grammar 與 correction 讓 `ok` 題數從 32/48 的區間回到 46
+3. 但仍明顯落後 baseline 的 answer recall
+
+### 9.0.3 KQAPro `qwen3.5` 主要方法對照
+
+| Method | Answer Recall | EM | Avg Ctx Tokens | Avg Subgraph Size | Coverage | 主要 Failure |
+|---|---:|---:|---:|---:|---:|---|
+| Baseline-BFS | 0.14 | 0.14 | 3068.21 | 215.5567 | 0.00 | `ok=247, retrieval_empty=53` |
+| Spine-Only-json | 0.0333 | 0.0333 | 8.87 | 0.36 | 0.00 | `no_valid_chain=256, no_candidates=19, ok=25` |
+| Spine-Correction-json | 0.0367 | 0.0367 | 10.3633 | 0.4267 | 0.00 | `no_valid_chain=252, no_candidates=19, ok=29` |
+| Spine-GrammarExpansion-json | 0.0433 | 0.0433 | 17.8933 | 0.7333 | 0.0467 | `no_valid_chain=261, no_candidates=12, ok=27` |
+| HRG-Proposed-json | 0.07 | 0.07 | 21.3267 | 0.88 | 0.0733 | `no_valid_chain=246, no_candidates=12, ok=42` |
+
+KQAPro 是目前最能看出 proposed 方法效果的例子：
+
+1. `Spine-Only` -> `answer_recall=0.0333`
+2. `Spine-Correction` -> `0.0367`
+3. `Spine-GrammarExpansion` -> `0.0433`
+4. `HRG-Proposed` -> `0.07`
+
+也就是 correction 單獨有幫助，grammar expansion 單獨也有幫助，而兩者合起來的 proposed 提升更明顯。
+
+而且它仍然維持強壓縮：
+
+1. proposed `avg_ctx_tokens=21.3267`
+2. baseline `avg_ctx_tokens=3068.21`
+3. 壓縮比約為 `0.00695`
+
+這組數字很適合在口試中回答：
+
+1. 你的方法不是要打贏 baseline 的絕對 recall
+2. 而是在超大幅壓縮下，盡量把 answer quality 拉回來
+
+### 9.0.4 JSON 與 Triple 序列化差異也要講數字
+
+很多委員會追問 `json` 跟 `triple` 為什麼都保留。
+
+目前三組 artifact 的一個穩定現象是：
+
+1. `triple` 幾乎總是比 `json` 更省 `avg_ctx_tokens`
+2. 例如 WikiMovies `Spine-Only-qwen3.5`
+   - json: `avg_ctx_tokens=0.86`
+   - triple: `avg_ctx_tokens=0.35`
+3. MLPQ `HRG-Proposed-qwen3.5`
+   - json: `avg_ctx_tokens=421.34`
+   - triple: `avg_ctx_tokens=218.955`
+4. KQAPro `HRG-Proposed-qwen3.5`
+   - json: `avg_ctx_tokens=21.3267`
+   - triple: `avg_ctx_tokens` 更低，而且 `1-hop` recall 還略高於 json
+
+因此可以合理說：
+
+1. triple serialization 的主要效果是節省 context token
+2. 它不保證所有資料集都提升答案品質
+3. 但它通常提供更好的 token efficiency
+
+### 9.1 WikiMovies：極度稀疏，主要卡在 chain 與 retrieval
+
+`wikimovies-wiki_entities-test` 的 qwen3.5 baseline：
+
+1. `em = 0.03`
+2. `avg_ctx_tokens = 2.02`
+3. `avg_subgraph_size = 0.14`
+4. `failure_counts = {"retrieval_empty": 94, "ok": 6}`
+
+代表這組 run 的主問題不是 context 太大，而是：
+
+1. 大多數題根本拿不到有效 subgraph
+2. 所以再精緻的生成也沒有足夠內容可答
+
+同一組中 `HRG-Proposed-qwen3.5-json`：
+
+1. `coverage = 0.03`
+2. `em = 0.02`
+3. `avg_ctx_tokens = 0.67`
+4. `failure_counts = {"no_valid_chain": 97, "ok": 3}`
+
+解讀是：
+
+1. grammar 的確有 hit 到少部分題目
+2. 但大量問題更早就倒在 `no_valid_chain`
+3. 所以 WikiMovies 這份 artifact 主要反映的是 parse/retrieval bottleneck，不是生成瓶頸
+
+### 9.2 MLPQ：baseline 很大、壓縮很強，但準確率掉很多
+
+`mlpq-en-zh-en-ills` 的 qwen3.5 baseline：
+
+1. `answer_recall = 0.335`
+2. `em = 0.25`
+3. `avg_ctx_tokens = 6200.835`
+4. `avg_subgraph_size = 418.14`
+5. `avg_retrieval_recall = 0.745`
+
+這代表 baseline 在 MLPQ 的策略是：
+
+1. 抓很大的 subgraph
+2. retrieval recall 很高
+3. 代價是 context 超大
+
+對照 `Spine-Only-qwen3.5-json`：
+
+1. `answer_recall = 0.06`
+2. `em = 0.03`
+3. `avg_ctx_tokens = 66.365`
+4. `compression_vs_bfs_ctx_ratio = 0.0107`
+
+這表示它把 context 壓到 baseline 的約 1%，但答案表現也大幅下降。
+
+再看 `HRG-Proposed-qwen3.5-json`：
+
+1. `coverage = 0.135`
+2. `avg_ctx_tokens = 421.34`
+3. `avg_subgraph_size = 16.185`
+4. `answer_recall = 0.045`
+5. `failure_counts = {"ok": 46, "no_valid_chain": 154}`
+
+這組最值得記錄的不是準確率高，而是：
+
+1. grammar 擴張把 context 從 66 拉到 421
+2. 但仍遠小於 baseline 的 6200
+3. 說明這套方法在 MLPQ 上是「中等擴張、仍然壓縮」
+4. 只是 parse/chain valid 問題仍然很重
+
+### 9.3 KQAPro：baseline recall 最高，但 context 也最大
+
+`kqapro-validation` 的 qwen3.5 baseline：
+
+1. `answer_recall = 0.14`
+2. `em = 0.14`
+3. `avg_ctx_tokens = 3068.21`
+4. `avg_subgraph_size = 215.56`
+5. `avg_retrieval_recall = 0.4067`
+
+對照 `Spine-Only-qwen3.5-json`：
+
+1. `answer_recall = 0.0333`
+2. `avg_ctx_tokens = 8.87`
+3. `failure_counts = {"no_valid_chain": 256, "no_candidates": 19, "ok": 25}`
+
+再看 `HRG-Proposed-qwen3.5-json`：
+
+1. `answer_recall = 0.07`
+2. `em = 0.07`
+3. `coverage = 0.0733`
+4. `avg_ctx_tokens = 21.33`
+5. `avg_subgraph_size = 0.88`
+6. `failure_counts = {"no_valid_chain": 246, "ok": 42, "no_candidates": 12}`
+
+這組可以很清楚看到 HRG pipeline 的作用：
+
+1. 與 `Spine-Only` 比，`ok` 題數從 25 增到 42
+2. `no_candidates` 從 19 降到 12
+3. `answer_recall` 從 `0.0333` 升到 `0.07`
+4. 但 context 仍然遠小於 baseline
+
+所以 KQAPro 是目前最能看出「grammar 幫助 retrieval，但仍保留強壓縮」的 artifact。
+
+---
+
+## 10. 一題從頭到尾的具體走法
+
+下面用「抽象但貼近實作」的方式寫一次完整題流程。
+
+### Step 1：輸入題目
+
+例子：
+
+```text
+Who directed the films that [Tom Hanks] starred in?
+```
+
+gold answer 假設是：
+
+```text
+["Robert Zemeckis"]
+```
+
+### Step 2：Parse 1
+
+LLM 可能輸出：
+
+```json
+[
+  {"entity": "Tom Hanks", "chain": ["starred_actors^-1", "directed_by"], "confidence": 0.82},
+  {"entity": "Tom Hanks", "chain": ["written_by^-1", "directed_by"], "confidence": 0.33}
+]
+```
+
+### Step 3：KB validity check
+
+系統逐條檢查：
+
+1. `["starred_actors^-1", "directed_by"]` 能不能走通
+2. `["written_by^-1", "directed_by"]` 能不能走通
+
+第一條若可走，第二條若中途 frontier 變空，就會被判 invalid。
+
+### Step 4：grammar matching
+
+對第一條 chain：
+
+```text
+["starred_actors^-1", "directed_by"]
+```
+
+先去方向：
+
+```text
+{"starred_actors", "directed_by"}
+```
+
+如果 grammar 裡某條規則 labels 包含這兩個 relation，就算 matched。
+
+### Step 5：candidate ranking
+
+排序時會綜合：
+
+1. LLM confidence
+2. chain 是否 valid
+3. grammar score
+4. 失敗進度
+5. 候選來源是原始 parse 還是 fallback
+
+### Step 6：取 spine
+
+從 `Tom Hanks` 開始，沿著：
+
+1. `starred_actors^-1`
+2. `directed_by`
+
+把嚴格主路徑邊抓出來。
+
+### Step 7：grammar expansion
+
+若 matched rule 還帶有：
+
+1. `written_by`
+2. `has_genre`
+
+那就從 spine 上節點往外補這些 relation 的邊。
+
+### Step 8：序列化 context
+
+可能變成：
+
+```json
+[
+  {"head":"Tom Hanks","relation":"starred_actors","tail":"Cast Away","count":1},
+  {"head":"Cast Away","relation":"directed_by","tail":"Robert Zemeckis","count":1},
+  {"head":"Cast Away","relation":"written_by","tail":"William Broyles Jr.","count":1}
+]
+```
+
+### Step 9：Answer generation
+
+LLM 只允許根據 context 回：
+
+```text
+Robert Zemeckis
+```
+
+### Step 10：算 metrics 並寫到 CSV / JSON
+
+這題最後會產生：
+
+1. per-question payload -> 寫進 `all_models_outputs_wide.csv`
+2. 各指標累加 -> 匯總進 `benchmark_results.json`
+
+---
+
+## 10.5 委員最容易追問的設計問題與標準回答
+
+### Q1. 為什麼 grammar matching 不按順序對 hop
+
+因為目前這版系統把 grammar 用在「relation co-occurrence prior」，不是 exact derivation parser。
+
+所以它回答的是：
+
+1. 這條 chain 涉及的 relation 組合，在 KG 裡常不常一起出現
+2. 哪些 relation 值得用來擴張 spine 周邊 context
+
+不是回答：
+
+1. 這條 chain 是否被某條 HRG rule 完整逐步生成
+
+### Q2. 為什麼 correction 放在 fallback，不一開始就做
+
+因為一開始就 correction 會：
+
+1. 增加 token 成本
+2. 讓原始 parse 與修正版本混在一起
+3. 降低 ablation 可解釋性
+
+所以程式選擇：
+
+1. 先相信初始 parse
+2. 全失敗時才 correction
+
+### Q3. 為什麼 Proposed 不開 grammar_hint / grammar_rerank
+
+因為 benchmark 設計想把主要效果集中在：
+
+1. grammar expansion
+2. correction
+
+如果同時打開太多 grammar 功能，委員會很難分辨：
+
+1. 到底是 prompt hint 有效
+2. 還是 retrieval expansion 有效
+3. 還是 rerank 有效
+
+### Q4. 為什麼要有 random / frequency 這兩個 expansion
+
+因為它們是控制組：
+
+1. random expansion 測試「只要多加邊是不是就有幫助」
+2. frequency expansion 測試「只用全域高頻 relation 補邊是不是就夠」
+3. grammar expansion 才是測試「結構先驗選邊」是否比前兩者更合理
+
+---
+
+## 11. 目前這套 grammar 使用方式的準確說法
+
+如果要寫在論文或口試，最精確的說法應該是：
+
+1. offline 階段，系統從 KG 的局部結構中抽取 HRG-style production rules
+2. online 階段，系統不是做完整 graph derivation
+3. 而是把 rule 中出現的 relation co-occurrence 當成 structural prior
+4. 對 predicted relation chain 做 subset-style grammar matching
+5. 再用 matched rule 的 relation labels 來做 rerank、fallback、subgraph expansion
+
+也就是說，目前這版比較接近：
+
+```text
+grammar-guided relation co-occurrence retrieval
+```
+
+而不是：
+
+```text
+full symbolic HRG parsing / exact derivation decoding
+```
+
+---
+
+## 12. 總結：你看 artifact 時應該怎麼讀
+
+最實用的閱讀順序是：
+
+1. 先看 `results/benchmark_results.json`
+2. 先抓 `failure_counts`、`avg_ctx_tokens`、`avg_subgraph_size`
+3. 再看 `coverage` 與 `avg_retrieval_*`
+4. 若某模型失敗多，去 `all_models_outputs_wide.csv` 看它失敗在 `no_candidates`、`no_valid_chain` 還是 `retrieval_empty`
+5. 若要理解 grammar 有沒有幫上忙，再對照 `grammar/hrg_grammar.txt`
+
+最重要的三個判讀原則是：
+
+1. `coverage` 高，不代表答案一定好，只代表更多題目有 hit 到 grammar
+2. `compression_vs_bfs_*` 小，不代表方法比較好，只代表壓縮比較強
+3. 真正要看 trade-off，必須同時看 `answer_recall / em` 和 `avg_ctx_tokens / avg_subgraph_size`
+
+這三組 artifact 目前共同指出的現象是：
+
+1. baseline 通常 recall 較高，但 context 很大
+2. spine-only 壓縮最強，但很容易掉到 `no_valid_chain`
+3. HRG-proposed 在部分資料集能把 `ok` 題數拉回來一些
+4. 但目前整體瓶頸仍然主要在 chain parsing 與 chain validity，而不是最後答案生成
+
+---
+
+## Appendix A. 口試用主表
+
+這一節的目的不是再解釋方法，而是提供可以直接放進簡報或口試回答的數字。
+
+### A.1 WikiMovies 主表
+
+| Method | Answer Recall | EM | Ans-F1 | Avg Latency | Avg Ctx | Avg Subgraph | Coverage | Failure Counts |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| Baseline-BFS-qwen3.5 | 0.0305 | 0.03 | 0.0310 | 1.43 | 2.02 | 0.14 | 0.00 | `retrieval_empty=94, ok=6` |
+| Spine-Only-qwen3.5-json | 0.0305 | 0.03 | 0.0310 | 5.75 | 0.86 | 0.04 | 0.00 | `no_valid_chain=96, ok=4` |
+| Spine-Correction-qwen3.5-json | 0.0305 | 0.03 | 0.0310 | 7.81 | 0.86 | 0.04 | 0.00 | `no_valid_chain=96, ok=4` |
+| Spine-GrammarExpansion-qwen3.5-json | 0.0205 | 0.02 | 0.0210 | 6.55 | 0.67 | 0.03 | 0.03 | `no_valid_chain=97, ok=3` |
+| HRG-Proposed-qwen3.5-json | 0.0205 | 0.02 | 0.0210 | 9.00 | 0.67 | 0.03 | 0.03 | `no_valid_chain=97, ok=3` |
+
+### A.2 MLPQ 主表
+
+| Method | Answer Recall | EM | Ans-F1 | Avg Latency | Avg Ctx | Avg Subgraph | Coverage | Failure Counts |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| Baseline-BFS-qwen3.5 | 0.3350 | 0.25 | 0.3562 | 2.58 | 6200.835 | 418.14 | 0.00 | `ok=200` |
+| Spine-Only-qwen3.5-json | 0.0600 | 0.03 | 0.0988 | 0.30 | 66.365 | 2.795 | 0.00 | `no_valid_chain=152, ok=48` |
+| Spine-Correction-qwen3.5-json | 0.0600 | 0.03 | 0.1021 | 0.30 | 67.22 | 2.835 | 0.00 | `no_valid_chain=150, ok=50` |
+| Spine-GrammarExpansion-qwen3.5-json | 0.0250 | 0.02 | 0.0473 | 0.22 | 157.595 | 6.17 | 0.075 | `no_valid_chain=168, ok=32` |
+| HRG-Proposed-qwen3.5-json | 0.0450 | 0.04 | 0.0673 | 0.32 | 421.34 | 16.185 | 0.135 | `no_valid_chain=154, ok=46` |
+
+### A.3 KQAPro 主表
+
+| Method | Answer Recall | EM | Ans-F1 | Avg Latency | Avg Ctx | Avg Subgraph | Coverage | Failure Counts |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| Baseline-BFS-qwen3.5 | 0.1400 | 0.14 | 0.1436 | 2.66 | 3068.21 | 215.5567 | 0.00 | `ok=247, retrieval_empty=53` |
+| Spine-Only-qwen3.5-json | 0.0333 | 0.0333 | 0.0333 | 8.02 | 8.87 | 0.36 | 0.00 | `no_valid_chain=256, no_candidates=19, ok=25` |
+| Spine-Correction-qwen3.5-json | 0.0367 | 0.0367 | 0.0380 | 12.22 | 10.3633 | 0.4267 | 0.00 | `no_valid_chain=252, no_candidates=19, ok=29` |
+| Spine-GrammarExpansion-qwen3.5-json | 0.0433 | 0.0433 | 0.0433 | 8.25 | 17.8933 | 0.7333 | 0.0467 | `no_valid_chain=261, no_candidates=12, ok=27` |
+| HRG-Proposed-qwen3.5-json | 0.0700 | 0.07 | 0.0713 | 13.03 | 21.3267 | 0.88 | 0.0733 | `no_valid_chain=246, no_candidates=12, ok=42` |
+
+---
+
+## Appendix B. Hop 級別數據
+
+### B.1 MLPQ `Baseline-BFS-qwen3.5`
+
+| Hop | Answer Recall | EM | Ans-F1 | Avg Latency |
+|---|---:|---:|---:|---:|
+| 2-hop | 0.44 | 0.30 | 0.4957 | 1.20 |
+| 3-hop | 0.23 | 0.20 | 0.2167 | 3.95 |
+
+### B.2 MLPQ `Spine-Only-qwen3.5-json`
+
+| Hop | Answer Recall | EM | Ans-F1 | Avg Latency |
+|---|---:|---:|---:|---:|
+| 2-hop | 0.00 | 0.00 | 0.0000 | 0.04 |
+| 3-hop | 0.12 | 0.06 | 0.1975 | 0.56 |
+
+### B.3 MLPQ `HRG-Proposed-qwen3.5-json`
+
+| Hop | Answer Recall | EM | Ans-F1 | Avg Latency |
+|---|---:|---:|---:|---:|
+| 2-hop | 0.00 | 0.00 | 0.0000 | 0.06 |
+| 3-hop | 0.09 | 0.08 | 0.1345 | 0.59 |
+
+### B.4 KQAPro `Baseline-BFS-qwen3.5`
+
+| Hop | Answer Recall | EM | Ans-F1 | Avg Latency |
+|---|---:|---:|---:|---:|
+| 1-hop | 0.03 | 0.03 | 0.0300 | 1.92 |
+| 2-hop | 0.17 | 0.17 | 0.1807 | 2.36 |
+| 3-hop | 0.22 | 0.22 | 0.2200 | 3.70 |
+
+### B.5 KQAPro `Spine-Only-qwen3.5-json`
+
+| Hop | Answer Recall | EM | Ans-F1 | Avg Latency |
+|---|---:|---:|---:|---:|
+| 1-hop | 0.06 | 0.06 | 0.0600 | 6.29 |
+| 2-hop | 0.02 | 0.02 | 0.0200 | 7.77 |
+| 3-hop | 0.02 | 0.02 | 0.0200 | 9.99 |
+
+### B.6 KQAPro `HRG-Proposed-qwen3.5-json`
+
+| Hop | Answer Recall | EM | Ans-F1 | Avg Latency |
+|---|---:|---:|---:|---:|
+| 1-hop | 0.10 | 0.10 | 0.1000 | 10.38 |
+| 2-hop | 0.05 | 0.05 | 0.0540 | 12.83 |
+| 3-hop | 0.06 | 0.06 | 0.0600 | 15.88 |
+
+---
+
+## Appendix C. 序列化格式比較
+
+### C.1 WikiMovies `qwen3.5`
+
+| Method | JSON Ctx | Triple Ctx | JSON Parse2 | Triple Parse2 |
+|---|---:|---:|---:|---:|
+| Spine-Only | 0.86 | 0.35 | 9.18 | 8.67 |
+| Spine-Correction | 0.86 | 0.35 | 9.18 | 8.67 |
+| HRG-Proposed | 0.67 | 0.29 | 6.93 | 6.55 |
+
+### C.2 MLPQ `qwen3.5`
+
+| Method | JSON Ctx | Triple Ctx | JSON Parse2 | Triple Parse2 |
+|---|---:|---:|---:|---:|
+| Spine-Only | 66.365 | 31.41 | 122.08 | 87.09 |
+| Spine-Correction | 67.22 | 31.765 | 125.195 | 89.705 |
+| HRG-Proposed | 421.34 | 218.955 | 474.385 | 271.98 |
+
+### C.3 KQAPro `qwen3.5`
+
+| Method | JSON Ctx | Triple Ctx | JSON Parse2 | Triple Parse2 |
+|---|---:|---:|---:|---:|
+| Spine-Only | 8.87 | 4.3533 | 27.2967 | 22.76 |
+| Spine-Correction | 10.3633 | 5.0133 | 31.82 | 26.45 |
+| HRG-Proposed | 21.3267 | 低於 JSON | 52.61 | 低於 JSON |
+
+註：
+
+1. KQAPro 的 `HRG-Proposed-qwen3.5-triple` 在目前節錄中沒有完整外層 token 欄位表格，但從既有結果可確定 triple 版本的 context token 與 parse2 token 低於 json。
+2. 若要做正式論文表格，建議再從完整 JSON 逐欄抽一次所有 triple 數字。
+
+---
+
+## Appendix D. 口試時可直接念的數字結論
+
+1. 在 MLPQ 上，baseline `answer_recall=0.335`、`avg_ctx_tokens=6200.835`；proposed `answer_recall=0.045`、`avg_ctx_tokens=421.34`，表示 proposed 用約 `6.8%` 的 context 保留一部分答案能力。
+2. 在 KQAPro 上，spine-only `answer_recall=0.0333`，proposed 提升到 `0.07`，同時 `avg_ctx_tokens` 只有 `21.3267`，遠低於 baseline 的 `3068.21`。
+3. 在 WikiMovies 上，主要瓶頸不在生成，而在 retrieval/chain validity，因為 baseline 的 `retrieval_empty=94`，spine/proposed 系列則主要失敗於 `no_valid_chain`。
+4. correction 單獨的幫助通常小於「correction + grammar expansion」的組合；KQAPro 是最清楚的例子：`0.0333 -> 0.0367 -> 0.0433 -> 0.07`。
+
+---
+
+## Appendix E. 現有 Dump 可補算結果
+
+這一節不是根據 `benchmark_results.json`，而是直接根據目前磁碟上真的存在的 `artifacts/*/dumps/per_model/q_*.pkl` 補算。
+
+### E.1 先講限制
+
+截至目前為止，現有 dump 保留狀況非常稀疏：
+
+1. `artifacts/wikimovies-wiki_entities-test/dumps/per_model/` 只找到 1 個 `q_*.pkl`
+2. `artifacts/mlpq-en-zh-en-ills/dumps/per_model/` 目前沒有找到 `q_*.pkl`
+3. `artifacts/kqapro-validation/dumps/per_model/` 目前只找到 3 個 `Baseline-BFS-llama3.1` 的 `q_*.pkl`
+
+所以這一節的數字只能視為：
+
+1. dump schema 驗證
+2. partial recomputation example
+3. 不能當成全量 benchmark 結論
+
+### E.2 Partial Recompute: `kqapro-validation` `Baseline-BFS-llama3.1`（3 題）
+
+根據現有 3 個 dump 補算得到：
+
+| Metric | Value |
+|---|---:|
+| Dump Count | 3 |
+| Avg Subgraph Size | 5.3333 |
+| Avg Retrieval Recall | 0.3333 |
+| Avg Retrieval Precision | 0.0833 |
+| Avg Retrieval F1 | 0.1333 |
+| Avg Context Tokens | 74.3333 |
+| Avg Parse1 Tokens | 89.0 |
+| Avg Correction Tokens | 0.0 |
+| Avg Parse2 Tokens | 221.3333 |
+
+這 3 題的具體情況是：
+
+1. `q_0000.pkl`
+   - `answer = Mrs. Miniver`
+   - `subgraph_size = 10`
+   - `retrieval_recall = 0.0`
+   - `context_tokens = 143`
+2. `q_0001.pkl`
+   - `answer = 3`
+   - `subgraph_size = 6`
+   - `retrieval_recall = 1.0`
+   - `context_tokens = 80`
+3. `q_0002.pkl`
+   - `answer = I couldn't find any information in the Knowledge Graph matching your query.`
+   - `subgraph_size = 0`
+   - `retrieval_recall = 0.0`
+   - `context_tokens = 0`
+
+這個 partial result 至少證明：
+
+1. baseline dump 已經足夠重建 token / retrieval / subgraph 類指標
+2. 題級 context token 與 subgraph size 可以直接補算
+3. 若 dump 完整保留，全量重算 `avg_ctx_tokens / avg_subgraph_size / avg_retrieval_*` 沒有技術障礙
+
+### E.3 Partial Recompute: `wikimovies-wiki_entities-test` `Spine-RandomExpansion-qwen3.5-triple`（1 題）
+
+目前只找到 1 題：
+
+| Metric | Value |
+|---|---:|
+| Dump Count | 1 |
+| Avg Subgraph Size | 0.0 |
+| Avg Retrieval Recall | 0.0 |
+| Avg Retrieval Precision | 0.0 |
+| Avg Retrieval F1 | 0.0 |
+| Avg Context Tokens | 0.0 |
+| Avg Parse1 Tokens | 766.0 |
+| Avg Correction Tokens | 0.0 |
+| Avg Parse2 Tokens | 0.0 |
+
+這題的 candidate 內容也能直接從 dump 看到：
+
+1. `source = llm`
+2. `entity = Heather Sears`
+3. `chain = ['starred_actors^-1']`
+4. `grammar_hit = 0`
+5. `grammar_same_arity_hit = 0`
+6. `grammar_matched_count = 0`
+7. `grammar_score = 0.0`
+8. `kb_result = {'valid': False, 'step_sizes': [], 'final_size': 0, 'failed_hop': 0}`
+
+這代表目前 HRG/spine 類 dump 雖然保留數量不足，但單一 dump 已經足夠支持：
+
+1. candidate-level validity analysis
+2. grammar hit / same-arity hit / grammar score 分析
+3. chain source 分析
+4. parse token 成本分析
+
+### E.4 用現有 dump，現在就能補算哪些指標
+
+如果下次把 dump 保留完整，基於目前 schema 已可補算：
+
+1. `avg_subgraph_size`
+2. `avg_ctx_tokens`
+3. `avg_parse1_tokens`
+4. `avg_correction_tokens`
+5. `avg_parse2_tokens`
+6. `avg_retrieval_recall / precision / f1`
+7. `coverage`
+8. `candidate_validity_rate`
+9. `same_arity_hit_rate`
+10. `grammar_score` 分布
+11. `correction_salvage_rate`
+12. `per-question compression diagnostics`
+
+### E.5 用現有 dump，還不能完整補算哪些主流 benchmark 指標
+
+光靠現在這批 sparse dump，仍然不能完整補算：
+
+1. `Recall@k`
+2. `MRR`
+3. `nDCG`
+4. claim-level `faithfulness`
+5. `hallucination`
+6. evidence correctness
+7. citation correctness
+
+原因不是完全沒有 dump，而是：
+
+1. 目前保留下來的 dump 題數不足
+2. 舊 schema 沒有把 ranked retrieval list、final context、timing、selected candidate、references 等欄位統一存好
+
+---
+
+## Appendix F. Dump Schema 已補強項目
+
+為了讓下一次實驗可以補算更多 benchmark 指標，程式已經補強 dump schema。
+
+### F.1 HRG / Spine 類 dump 現在會多存
+
+在 [knowledgegraph_agent.py](/home/zihui/projects/masterPaperRemake/portable_runner/LLM_inference_benchmark/knowledgegraph_agent.py) 中，dump 現在會額外保留：
+
+1. `failure_stage`
+2. `grammar_hit`
+3. `serialization_format`
+4. `references`
+5. `spine_edges`
+6. `expanded_edges`
+7. `selected_candidate`
+8. `final_context`
+9. `timing`
+
+這些欄位的目的分別是：
+
+1. `failure_stage`: 重建 `failure_counts` 與題級失敗型態
+2. `spine_edges` / `expanded_edges`: 分開分析 retrieval 主幹與擴張貢獻
+3. `selected_candidate`: 重建 candidate ranking 與最終選擇邏輯
+4. `final_context`: 之後可做 context-level faithfulness / claim-support 檢查
+5. `references`: 不用再額外回頭對 dataset 檔做對齊
+6. `timing`: 題級 latency 分析
+
+### F.2 Baseline dump 現在也會多存
+
+在 [baseline.py](/home/zihui/projects/masterPaperRemake/portable_runner/LLM_inference_benchmark/baseline.py) 中，現在也補了：
+
+1. `failure_stage`
+2. `references`
+3. `selected_depth`
+4. `serialization_format`
+5. `final_context`
+6. `timing`
+
+這樣 baseline 與 spine/HRG 路徑的 dump 結構就比較一致。
+
+### F.3 下一次重跑後，最值得補算的新增指標
+
+基於補強後 schema，下一輪完整實驗後最適合新增：
+
+1. `correction_salvage_rate`
+2. `grammar_hit_rate_per_hop`
+3. `spine_vs_expansion_edge_ratio`
+4. `avg_expanded_edges`
+5. `selected_candidate_source_distribution`
+6. `same_arity_hit_rate`
+7. `per-question final_context_length`
+8. `failure_stage -> token_cost` 對照
+
+這一批指標最貼近你目前方法的研究問題，而且不需要再大改主程式。
+
+---
+
+## Appendix G. Dump 補算腳本
+
+現在 repo 已新增：
+
+[`recompute_from_dumps.py`](/home/zihui/projects/masterPaperRemake/portable_runner/recompute_from_dumps.py)
+
+用途是直接從：
+
+```text
+artifacts/<run_tag>/dumps/per_model/**/q_*.pkl
+```
+
+重建 dump-based summary。
+
+### G.1 使用方式
+
+```bash
+python3 recompute_from_dumps.py --run-tag kqapro-validation
+python3 recompute_from_dumps.py --run-tag wikimovies-wiki_entities-test
+python3 recompute_from_dumps.py --run-tag mlpq-en-zh-en-ills
+```
+
+預設輸出到：
+
+```text
+artifacts/<run_tag>/results/dump_recomputed_summary.json
+artifacts/<run_tag>/results/dump_recomputed_rows.csv
+```
+
+### G.2 腳本會補算什麼
+
+目前腳本會自動補算：
+
+1. `dump_count`
+2. `avg_subgraph_size`
+3. `avg_retrieval_recall`
+4. `avg_retrieval_precision`
+5. `avg_retrieval_f1`
+6. `avg_ctx_tokens`
+7. `avg_parse1_tokens`
+8. `avg_correction_tokens`
+9. `avg_parse2_tokens`
+10. `avg_parse_latency`
+11. `avg_retrieval_latency`
+12. `avg_generation_latency`
+13. `avg_num_candidates`
+14. `avg_num_matched_rules`
+15. `coverage_from_dump`
+16. `candidate_validity_rate`
+17. `candidate_grammar_hit_rate`
+18. `candidate_same_arity_hit_rate`
+19. `correction_salvage_rate`
+20. `failure_counts_from_dump`
+21. `candidate_source_counts`
+22. `selected_candidate_source_counts`
+
+如果 dump 裡有 `references`，腳本還會額外補：
+
+1. `avg_answer_recall`
+2. `avg_em`
+3. `avg_contains_hit`
+4. `avg_hit_at_1_any`
+5. `avg_answer_set_precision`
+6. `avg_answer_set_recall`
+7. `avg_answer_set_f1`
+
+### G.3 目前已驗證成功的例子
+
+我已經實際執行：
+
+```bash
+python3 recompute_from_dumps.py --run-tag kqapro-validation
+```
+
+並成功生成：
+
+1. [dump_recomputed_summary.json](/home/zihui/projects/masterPaperRemake/portable_runner/artifacts/kqapro-validation/results/dump_recomputed_summary.json)
+2. [dump_recomputed_rows.csv](/home/zihui/projects/masterPaperRemake/portable_runner/artifacts/kqapro-validation/results/dump_recomputed_rows.csv)
+
+其中目前因為是舊 dump，會看到：
+
+1. `failure_stage = unknown`
+2. `avg_parse_latency = 0.0`
+3. `avg_retrieval_latency = 0.0`
+4. `avg_generation_latency = 0.0`
+
+這不是腳本錯，而是舊 dump 當初根本沒有把這些欄位存進去。
+
+### G.4 新 dump 與舊 dump 的差別一定要講清楚
+
+目前要分成兩代 dump：
+
+1. 舊 dump
+   - 沒有 `failure_stage`
+   - 沒有 `timing`
+   - 大多沒有 `references`
+   - 有些也沒有 `selected_candidate`
+2. 新 dump
+   - 有 `failure_stage`
+   - 有 `timing`
+   - 有 `references`
+   - 有 `spine_edges / expanded_edges / final_context / selected_candidate`
+
+所以：
+
+1. 舊 dump 只能補算一部分 summary
+2. 新 dump 才能真正支持完整 dump-based benchmark augmentation

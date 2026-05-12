@@ -1365,6 +1365,15 @@ class KnowledgeGraphAgent:
         retrieval_precision: float = 0.0,
         retrieval_f1: float = 0.0,
         subgraph_size: int = 0,
+        failure_stage: str = "ok",
+        grammar_hit: bool = False,
+        serialization_format: Optional[str] = None,
+        references: Optional[List[str]] = None,
+        spine_edges: Optional[List[Dict[str, Any]]] = None,
+        expanded_edges: Optional[List[Dict[str, Any]]] = None,
+        selected_candidate: Optional[Dict[str, Any]] = None,
+        final_context: Optional[str] = None,
+        timing: Optional[Dict[str, Any]] = None,
     ):
         payload = {
             "question": question,
@@ -1379,6 +1388,15 @@ class KnowledgeGraphAgent:
             "retrieval_precision": retrieval_precision,
             "retrieval_f1": retrieval_f1,
             "subgraph_size": subgraph_size,
+            "failure_stage": failure_stage,
+            "grammar_hit": grammar_hit,
+            "serialization_format": serialization_format,
+            "references": references or [],
+            "spine_edges": spine_edges or [],
+            "expanded_edges": expanded_edges or [],
+            "selected_candidate": selected_candidate or {},
+            "final_context": final_context or "",
+            "timing": timing or {},
         }
         with open(save_path, "wb") as f:
             pickle.dump(payload, f)
@@ -1497,6 +1515,10 @@ class KnowledgeGraphAgent:
                 "subgraph_size": 0,
                 "grammar_hit": False,
                 "has_references": bool(references),
+                "references": references or [],
+                "spine_edges": [],
+                "expanded_edges": [],
+                "selected_candidate": {},
                 "parse_latency": parse_latency,
                 "retrieval_latency": 0.0,
             }
@@ -1614,6 +1636,10 @@ class KnowledgeGraphAgent:
                 "subgraph_size": 0,
                 "grammar_hit": False,
                 "has_references": bool(references),
+                "references": references or [],
+                "spine_edges": [],
+                "expanded_edges": [],
+                "selected_candidate": best or {},
                 "parse_latency": parse_latency,
                 "retrieval_latency": retrieval_latency,
             }
@@ -1657,6 +1683,10 @@ class KnowledgeGraphAgent:
                 "subgraph_size": 0,
                 "grammar_hit": grammar_hit,
                 "has_references": bool(references),
+                "references": references or [],
+                "spine_edges": [],
+                "expanded_edges": [],
+                "selected_candidate": best or {},
                 "parse_latency": parse_latency,
                 "retrieval_latency": retrieval_latency + (time.perf_counter() - retrieval_t0),
             }
@@ -1719,6 +1749,10 @@ class KnowledgeGraphAgent:
             "subgraph_size": subgraph_size,
             "grammar_hit": grammar_hit,
             "has_references": bool(references),
+            "references": references or [],
+            "spine_edges": spine_edges,
+            "expanded_edges": expanded_edges,
+            "selected_candidate": chosen,
             "parse_latency": parse_latency,
             "retrieval_latency": retrieval_latency + (time.perf_counter() - retrieval_t0),
             "total_prepare_latency": time.perf_counter() - total_t0,
@@ -1744,6 +1778,7 @@ class KnowledgeGraphAgent:
                 answer = prepared.get("answer") or "No matching facts found in KB."
                 parse2_tokens = 0
                 context_tokens = 0
+                final_context = ""
                 if save_path:
                     self._dump(
                         save_path=save_path,
@@ -1764,6 +1799,19 @@ class KnowledgeGraphAgent:
                         retrieval_precision=prepared.get("retrieval_precision", 0.0),
                         retrieval_f1=prepared.get("retrieval_f1", 0.0),
                         subgraph_size=prepared.get("subgraph_size", 0),
+                        failure_stage=status or "unknown",
+                        grammar_hit=prepared.get("grammar_hit", False),
+                        serialization_format=serialization_format,
+                        references=prepared.get("references", []),
+                        spine_edges=prepared.get("spine_edges", []),
+                        expanded_edges=prepared.get("expanded_edges", []),
+                        selected_candidate=prepared.get("selected_candidate", {}),
+                        final_context=final_context,
+                        timing={
+                            "parse_latency": prepared.get("parse_latency", 0.0),
+                            "retrieval_latency": prepared.get("retrieval_latency", 0.0),
+                            "generation_latency": 0.0,
+                        },
                     )
             else:
                 final_edges = prepared.get("edges", [])
@@ -1792,6 +1840,19 @@ class KnowledgeGraphAgent:
                         retrieval_precision=prepared.get("retrieval_precision", 0.0),
                         retrieval_f1=prepared.get("retrieval_f1", 0.0),
                         subgraph_size=prepared.get("subgraph_size", 0),
+                        failure_stage=prepared.get("status", "ok"),
+                        grammar_hit=prepared.get("grammar_hit", False),
+                        serialization_format=serialization_format,
+                        references=prepared.get("references", []),
+                        spine_edges=prepared.get("spine_edges", []),
+                        expanded_edges=prepared.get("expanded_edges", []),
+                        selected_candidate=prepared.get("selected_candidate", {}),
+                        final_context=context_str,
+                        timing={
+                            "parse_latency": prepared.get("parse_latency", 0.0),
+                            "retrieval_latency": prepared.get("retrieval_latency", 0.0),
+                            "generation_latency": time.perf_counter() - generation_t0,
+                        },
                     )
         finally:
             self.serialization_format = original_format
