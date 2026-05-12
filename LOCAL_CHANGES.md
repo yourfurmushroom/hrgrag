@@ -100,3 +100,128 @@ Recommended pull command when local commits exist:
 ```bash
 git pull --rebase
 ```
+
+## Follow-Up Optimizations After Pulling
+
+These are not required for the current runnable state, but should be considered after future benchmark or paper-alignment changes are pulled.
+
+### 1. Add hop-level checkpointing
+
+Current behavior saves `benchmark_results.json` after a full model finishes. For MetaQA, one model includes `1-hop`, `2-hop`, and `3-hop`. If the run stops in the middle of `3-hop`, the model may need to rerun from `1-hop`.
+
+Better behavior:
+
+- Save each `model x hop` result as soon as that hop finishes.
+- Resume by skipping completed hops instead of only completed models.
+
+### 2. Add per-question resume
+
+Current `per_model/q_xxxx.pkl` files are useful for debugging, but they are not used as checkpoints. If a run stops at question 70, the current code does not resume from question 71.
+
+Better behavior:
+
+- Treat completed per-question dumps as resumable records.
+- Recompute aggregate metrics from completed per-question outputs.
+- Only rerun missing or invalid questions.
+
+### 3. Fix CSV resume behavior
+
+`benchmark_results.json` can be loaded on rerun, but `ALL_LONG_ROWS` only contains rows from the current process. If completed models are skipped, `all_models_outputs_wide.csv` may not contain skipped models.
+
+Better behavior:
+
+- Rebuild CSV from persisted JSON and/or per-question dumps.
+- Ensure CSV and JSON always describe the same completed runs.
+
+### 4. Improve failed-run retry behavior
+
+Current behavior records failed models as:
+
+```json
+"ModelName": "FAILED"
+```
+
+Because `"FAILED"` still appears in `benchmark_results.json`, reruns may skip that model.
+
+Better behavior:
+
+- Only skip models marked as completed.
+- Add a `--retry-failed` option.
+- Store failure metadata separately from completed results.
+
+### 5. Make shared retrieval cache invalidation safer
+
+The `_shared_retrieval/*.prepared.pkl` cache can save time, but it may become stale if the KB, grammar, retrieval settings, or prompt behavior changes without changing the run tag.
+
+Better behavior:
+
+- Include KB file hash in the shared cache key.
+- Include grammar file hash in the shared cache key.
+- Include relevant retrieval configuration in the cache key.
+
+### 6. Pin `transformers` to a commit
+
+Current dependency:
+
+```text
+transformers @ git+https://github.com/huggingface/transformers.git
+```
+
+This installs the latest main branch, which may change over time. That is risky for paper experiments.
+
+Better behavior:
+
+- Pin to a known working commit hash.
+- Record the installed `transformers` commit/version in benchmark artifacts.
+
+### 7. Avoid duplicate bootstrap work
+
+`run_local_all.sh` runs `bootstrap_all.sh`, and `auto_benchmark.sh` also runs `bootstrap_all.sh`.
+
+Better behavior:
+
+- Let only one layer handle bootstrap.
+- Add an option to skip bootstrap when datasets and configs are already ready.
+
+### 8. Gate debug logs behind an env flag
+
+`agent_factory.py` currently prints detailed model-loading debug information every run.
+
+Better behavior:
+
+- Print these logs only when an env flag is enabled, for example:
+
+  ```bash
+  DEBUG_MODEL_LOAD=1
+  ```
+
+### 9. Make GPU loading strategy configurable
+
+Generic Hugging Face models currently load with:
+
+```python
+device_map="cuda"
+```
+
+This is okay for the current single-GPU setup, but may be too rigid for multi-GPU, CPU fallback, or different machines.
+
+Better behavior:
+
+- Respect `target_device` more directly.
+- Allow `device_map=auto` through configuration.
+- Record actual device placement in artifacts.
+
+### 10. Review sampling strategy for paper runs
+
+Current behavior takes the first `SAMPLE_LIMIT` questions per split/hop:
+
+```python
+dataset = dataset[:sample_limit]
+```
+
+For MetaQA with `SAMPLE_LIMIT=100`, this means 100 questions per hop, or 300 questions per model.
+
+Better behavior:
+
+- Use fixed-seed random sampling if the paper setup requires unbiased sampling.
+- Save sampled question IDs so reruns use the exact same subset.
