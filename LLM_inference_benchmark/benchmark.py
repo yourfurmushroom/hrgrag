@@ -195,7 +195,7 @@ def build_model_specs():
                 shared_group=f"Spine-GrammarExpansion-{tag}",
                 base_kwargs={
                     **llm_device_kwargs,
-                    "use_grammar_rerank": False,
+                    "use_grammar_rerank": True,
                     "use_grammar_expansion": True,
                     "use_fallback_correction": False,
                     "use_grammar_hint": False,
@@ -249,7 +249,7 @@ def build_model_specs():
                 shared_group=f"HRG-Proposed-{tag}",
                 base_kwargs={
                     **llm_device_kwargs,
-                    "use_grammar_rerank": False,
+                    "use_grammar_rerank": True,
                     "use_grammar_expansion": True,
                     "use_fallback_correction": True,
                     "use_grammar_hint": False,
@@ -270,7 +270,7 @@ MODEL_SPECS = build_model_specs()
 
 
 
-TEST_SAMPLE_LIMIT = 1
+TEST_SAMPLE_LIMIT = 100
 OUTPUT_FILE = os.path.join(ARTIFACTS_ROOT, "shared", "benchmark_results.json")
 
 DETAIL_DIR = os.path.join(ARTIFACTS_ROOT, "shared", "benchmark_details_csv")
@@ -357,9 +357,9 @@ def resolve_default_grammar_path(args, run_tag: str):
     if args.dataset == "metaqa":
         return os.path.join(PROJECT_ROOT, "hrg_grammar", "metaqa_phrg_grammar.json")
     if args.dataset == "wikimovies":
-        return os.path.join(PROJECT_ROOT, "hrg_grammar", "wikimovies_phrg_grammar.json")
+        return os.path.join(args.artifacts_root, run_tag, "grammar", "hrg_grammar.json")
     if args.dataset == "mlpq":
-        return os.path.join(PROJECT_ROOT, "hrg_grammar", "mlpq_phrg_grammar.json")
+        return os.path.join(args.artifacts_root, run_tag, "grammar", "hrg_grammar.json")
     return os.path.join(args.artifacts_root, run_tag, "grammar", "hrg_grammar.json")
 
 
@@ -973,7 +973,7 @@ async def main():
         if args.dataset == "metaqa"
         else (
             (
-                os.path.join(PROJECT_ROOT, "Datasets", "WikiMovies", "movieqa", "knowledge_source", "wiki_entities", "wiki_entities_kb.txt")
+                os.path.join(PROJECT_ROOT, "Datasets", "WikiMovies", "movieqa", "knowledge_source", "wiki_entities", "wiki_entities_kb_normalized.txt")
                 if args.wikimovies_subset == "wiki_entities"
                 else os.path.join(PROJECT_ROOT, "Datasets", "WikiMovies", "movieqa", "knowledge_source", "full", "full_kb.txt")
             )
