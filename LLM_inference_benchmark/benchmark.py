@@ -5,7 +5,6 @@ import os
 import json
 import hashlib
 import pickle
-import nltk
 import time
 import gc
 import torch
@@ -15,7 +14,6 @@ import re
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
-from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 from tqdm import tqdm
 from huggingface_hub import login
 from knowledgegraph_agent import KnowledgeGraphAgent
@@ -280,6 +278,24 @@ DETAIL_CSV = os.path.join(DETAIL_DIR, "all_models_outputs_wide.csv")
 
 ALL_LONG_ROWS = []
 
+ANSWER_METRIC_KEYS = [
+    "em",
+    "hits_at_1",
+    "hits_at_3",
+    "hits_at_5",
+    "mrr",
+    "answer_set_precision",
+    "answer_set_recall",
+    "answer_set_f1",
+]
+
+LEGACY_ANSWER_METRIC_KEYS = [
+    "bleu",
+    "answer_recall",
+    "contains_hit",
+    "hit_at_1_any",
+]
+
 # 避免同一張 GPU 上同時 generate 多題互搶
 SEM = asyncio.Semaphore(1)
 
@@ -394,6 +410,19 @@ def enrich_report_with_derived_metrics(full_report: dict):
         else:
             data["compression_vs_bfs_ctx_ratio"] = None
             data["compression_vs_bfs_subgraph_ratio"] = None
+
+
+def prune_legacy_report_metrics(full_report: dict):
+    for data in full_report.values():
+        if not isinstance(data, dict) or data == "FAILED":
+            continue
+        for key in LEGACY_ANSWER_METRIC_KEYS:
+            data.pop(key, None)
+        for dataset_metrics in data.get("results", {}).values():
+            if not isinstance(dataset_metrics, dict):
+                continue
+            for key in LEGACY_ANSWER_METRIC_KEYS:
+                dataset_metrics.pop(key, None)
 
 
 def build_dataset_splits(args):
@@ -527,35 +556,16 @@ def split_candidate_answers(text: str, dataset: Optional[str] = None):
 
 
 def calculate_metrics(references, candidate, dataset: Optional[str] = None):
-    candidate_lower = (candidate or "").lower()
     candidate_norm = normalize_answer(candidate, dataset=dataset)
     ref_norms = [normalize_answer(ref, dataset=dataset) for ref in references if normalize_answer(ref, dataset=dataset)]
     candidate_parts = split_candidate_answers(candidate, dataset=dataset)
     candidate_set = set(candidate_parts)
     ref_set = set(ref_norms)
 
-    contains_hit = 0.0
-    for ref in references:
-        if ref.lower() in candidate_lower:
-            contains_hit = 1.0
-            break
-
-    hit_at_1_any = 0.0
-    if ref_set:
-        if candidate_set:
-            hit_at_1_any = 1.0 if bool(candidate_set & ref_set) else 0.0
-        elif candidate_norm:
-            hit_at_1_any = 1.0 if candidate_norm in ref_set else 0.0
-
     overlap = len(candidate_set & ref_set)
-    if len(ref_norms) <= 1:
-        acc = 1.0 if ref_norms and candidate_norm and candidate_norm == ref_norms[0] else 0.0
-    else:
-        acc = (overlap / len(ref_set)) if ref_set else 0.0
-
     exact_match = 1.0 if ref_set and candidate_set == ref_set else 0.0
     if len(ref_norms) <= 1:
-        exact_match = acc
+        exact_match = 1.0 if ref_norms and candidate_norm and candidate_norm == ref_norms[0] else 0.0
 
     answer_set_precision = (overlap / len(candidate_set)) if candidate_set else 0.0
     answer_set_recall = (overlap / len(ref_set)) if ref_set else 0.0
@@ -564,23 +574,21 @@ def calculate_metrics(references, candidate, dataset: Optional[str] = None):
     else:
         answer_set_f1 = 0.0
 
-    try:
-        cand_tokens = nltk.word_tokenize(candidate_lower)
-        ref_tokens_list = [nltk.word_tokenize(ref.lower()) for ref in references]
-        bleu = sentence_bleu(
-            ref_tokens_list,
-            cand_tokens,
-            smoothing_function=SmoothingFunction().method1
-        )
-    except Exception:
-        bleu = 0.0
+    first_correct_rank = None
+    for rank, candidate_answer in enumerate(candidate_parts, start=1):
+        if candidate_answer in ref_set:
+            first_correct_rank = rank
+            break
+
+    def hits_at(k: int) -> float:
+        return 1.0 if first_correct_rank is not None and first_correct_rank <= k else 0.0
 
     return {
-        "bleu": float(bleu),
-        "answer_recall": float(acc),
         "em": float(exact_match),
-        "contains_hit": float(contains_hit),
-        "hit_at_1_any": float(hit_at_1_any),
+        "hits_at_1": hits_at(1),
+        "hits_at_3": hits_at(3),
+        "hits_at_5": hits_at(5),
+        "mrr": float(1.0 / first_correct_rank) if first_correct_rank else 0.0,
         "answer_set_precision": float(answer_set_precision),
         "answer_set_recall": float(answer_set_recall),
         "answer_set_f1": float(answer_set_f1),
@@ -741,14 +749,7 @@ async def async_evaluate_question(
                 "model_output": "",
                 "model_payload": json.dumps({
                     "answer": "",
-                    "bleu": 0.0,
-                    "answer_recall": 0.0,
-                    "em": 0.0,
-                    "contains_hit": 0.0,
-                    "hit_at_1_any": 0.0,
-                    "answer_set_precision": 0.0,
-                    "answer_set_recall": 0.0,
-                    "answer_set_f1": 0.0,
+                    **{key: 0.0 for key in ANSWER_METRIC_KEYS},
                     "elapsed": 0.0,
                     "error": err_str,
                     "failure_stage": failure_stage,
@@ -758,14 +759,7 @@ async def async_evaluate_question(
                     "generation_failed": True,
                     "answerable": False,
                 }, ensure_ascii=False),
-                "bleu": 0.0,
-                "answer_recall": 0.0,
-                "em": 0.0,
-                "contains_hit": 0.0,
-                "hit_at_1_any": 0.0,
-                "answer_set_precision": 0.0,
-                "answer_set_recall": 0.0,
-                "answer_set_f1": 0.0,
+                **{key: 0.0 for key in ANSWER_METRIC_KEYS},
                 "elapsed": 0.0,
                 "error": err_str,
                 "failure_stage": failure_stage,
@@ -865,14 +859,6 @@ async def evaluate_single_model(
                 "model_output": r.get("model_payload", r["model_output"]),
             })
 
-        total_bleu = sum(r["bleu"] for r in results)
-        total_answer_recall = sum(r["answer_recall"] for r in results)
-        total_em = sum(r["em"] for r in results)
-        total_contains_hit = sum(r["contains_hit"] for r in results)
-        total_hit_at_1_any = sum(r["hit_at_1_any"] for r in results)
-        total_answer_set_precision = sum(r["answer_set_precision"] for r in results)
-        total_answer_set_recall = sum(r["answer_set_recall"] for r in results)
-        total_answer_set_f1 = sum(r["answer_set_f1"] for r in results)
         total_time = sum(r["elapsed"] for r in results)
         count = len(results)
 
@@ -885,32 +871,21 @@ async def evaluate_single_model(
             total_retrieval_latency += r.get("retrieval_latency", 0.0)
             total_generation_latency += r.get("generation_latency", 0.0)
 
-        avg_bleu = total_bleu / count if count > 0 else 0
-        avg_answer_recall = total_answer_recall / count if count > 0 else 0
-        avg_em = total_em / count if count > 0 else 0
-        avg_contains_hit = total_contains_hit / count if count > 0 else 0
-        avg_hit_at_1_any = total_hit_at_1_any / count if count > 0 else 0
-        avg_answer_set_precision = total_answer_set_precision / count if count > 0 else 0
-        avg_answer_set_recall = total_answer_set_recall / count if count > 0 else 0
-        avg_answer_set_f1 = total_answer_set_f1 / count if count > 0 else 0
+        avg_metrics = {
+            key: (sum(r.get(key, 0.0) for r in results) / count if count > 0 else 0.0)
+            for key in ANSWER_METRIC_KEYS
+        }
         avg_time = total_time / count if count > 0 else 0
 
         model_results[dataset_name] = {
-            "bleu": round(avg_bleu, 4),
-            "answer_recall": round(avg_answer_recall, 4),
-            "em": round(avg_em, 4),
-            "contains_hit": round(avg_contains_hit, 4),
-            "hit_at_1_any": round(avg_hit_at_1_any, 4),
-            "answer_set_precision": round(avg_answer_set_precision, 4),
-            "answer_set_recall": round(avg_answer_set_recall, 4),
-            "answer_set_f1": round(avg_answer_set_f1, 4),
+            **{key: round(value, 4) for key, value in avg_metrics.items()},
             "avg_latency": round(avg_time, 2),
         }
 
         tqdm.write(
-            f"  ✅ [{dataset_name}] BLEU: {avg_bleu:.4f} | "
-            f"AnsRecall: {avg_answer_recall:.4f} | EM: {avg_em:.4f} | "
-            f"AnsF1: {avg_answer_set_f1:.4f} | Avg Time: {avg_time:.2f}s"
+            f"  ✅ [{dataset_name}] EM: {avg_metrics['em']:.4f} | "
+            f"Hits@1: {avg_metrics['hits_at_1']:.4f} | "
+            f"AnsF1: {avg_metrics['answer_set_f1']:.4f} | Avg Time: {avg_time:.2f}s"
         )
 
     # ==========================================
@@ -947,14 +922,10 @@ async def evaluate_single_model(
     all_results = [r for ds in model_results.values() if isinstance(ds, dict) for r in [ds]]
     dataset_count = len(all_results)
     overall = {
-        "bleu": round(sum(d["bleu"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
-        "answer_recall": round(sum(d["answer_recall"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
-        "em": round(sum(d["em"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
-        "contains_hit": round(sum(d["contains_hit"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
-        "hit_at_1_any": round(sum(d["hit_at_1_any"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
-        "answer_set_precision": round(sum(d["answer_set_precision"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
-        "answer_set_recall": round(sum(d["answer_set_recall"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
-        "answer_set_f1": round(sum(d["answer_set_f1"] for d in all_results) / dataset_count, 4) if dataset_count else 0.0,
+        **{
+            key: round(sum(d.get(key, 0.0) for d in all_results) / dataset_count, 4) if dataset_count else 0.0
+            for key in ANSWER_METRIC_KEYS
+        },
         "avg_latency": round(sum(d["avg_latency"] for d in all_results) / dataset_count, 2) if dataset_count else 0.0,
     }
 
@@ -988,12 +959,6 @@ async def main():
     run_tag = resolve_run_tag(args)
     output_file, detail_csv = resolve_output_paths(args, run_tag)
     dump_root = resolve_dump_root(args, run_tag)
-
-    try:
-        nltk.data.find("tokenizers/punkt")
-    except Exception:
-        print("[Info] Downloading NLTK punkt tokenizer.")
-        nltk.download("punkt")
 
     print("==========================================")
     print(f"  {args.dataset.upper()} Benchmark & Data Collection")
@@ -1100,6 +1065,7 @@ async def main():
     # ==========================================
     # 5. 輸出結果
     # ==========================================
+    prune_legacy_report_metrics(full_report)
     enrich_report_with_derived_metrics(full_report)
     SEP = "=" * 145
     LINE = "-" * 145
@@ -1123,11 +1089,12 @@ async def main():
 
         print(f"{model_name:<30} | {'EM':<26} | {dataset_metric_line('em')}")
         print(f"{'':30} | {'Answer-Set F1':<26} | {dataset_metric_line('answer_set_f1')}")
-        print(f"{'':30} | {'Answer Recall':<26} | {dataset_metric_line('answer_recall')}")
-        print(f"{'':30} | {'Hit@1-any':<26} | {dataset_metric_line('hit_at_1_any')}")
+        print(f"{'':30} | {'Hits@1':<26} | {dataset_metric_line('hits_at_1')}")
+        print(f"{'':30} | {'Hits@3':<26} | {dataset_metric_line('hits_at_3')}")
+        print(f"{'':30} | {'Hits@5':<26} | {dataset_metric_line('hits_at_5')}")
+        print(f"{'':30} | {'MRR':<26} | {dataset_metric_line('mrr')}")
         print(f"{'':30} | {'Answer-Set Precision':<26} | {dataset_metric_line('answer_set_precision')}")
         print(f"{'':30} | {'Answer-Set Recall':<26} | {dataset_metric_line('answer_set_recall')}")
-        print(f"{'':30} | {'BLEU':<26} | {dataset_metric_line('bleu')}")
         print(f"{'':30} | {'Avg Latency (s)':<26} | {dataset_metric_line('avg_latency')}")
 
         if isinstance(data, dict) and "avg_retrieval_recall" in data:
