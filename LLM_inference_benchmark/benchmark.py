@@ -61,41 +61,41 @@ if HF_TOKEN:
 HOP_TO_DEPTH = {"1-hop": 1, "2-hop": 2, "3-hop": 3}
 
 MODEL_BACKBONES = [
-    # {
-    #     "tag": "gpt-oss",
-    #     "model_id": "openai/gpt-oss-20b",
-    #     "use_model_sharding": True,
-    #     "strict_gpu_sharding": True,
-    #     "target_device": None,
-    # },
+    {
+        "tag": "gpt-oss",
+        "model_id": "openai/gpt-oss-20b",
+        "use_model_sharding": True,
+        "strict_gpu_sharding": True,
+        "target_device": "cuda:0,cuda:1",
+    },
     {
         "tag": "qwen3.5",
         "model_id": "Qwen/Qwen3.5-35B-A3B-FP8",
-        "use_model_sharding": False,
-        "strict_gpu_sharding": False,
-        "target_device": "cuda:0",
+        "use_model_sharding": True,
+        "strict_gpu_sharding": True,
+        "target_device": "cuda:0,cuda:1",
     },
-    {
-        "tag": "llama3.1",
-        "model_id": "meta-llama/Llama-3.1-8B-Instruct",
-        "use_model_sharding": False,
-        "strict_gpu_sharding": False,
-        "target_device": "cuda:0",
-    },
-    {
-        "tag": "llama3.2",
-        "model_id": "meta-llama/Llama-3.2-1B-Instruct",
-        "use_model_sharding": False,
-        "strict_gpu_sharding": False,
-        "target_device": "cuda:0",
-    },
-    {
-        "tag": "qwen2.5",
-        "model_id": "Qwen/Qwen2.5-7B-Instruct",
-        "use_model_sharding": False,
-        "strict_gpu_sharding": False,
-        "target_device": "cuda:0",
-    },
+    # {
+    #     "tag": "llama3.1",
+    #     "model_id": "meta-llama/Llama-3.1-8B-Instruct",
+    #     "use_model_sharding": False,
+    #     "strict_gpu_sharding": False,
+    #     "target_device": "cuda:0",
+    # },
+    # {
+    #     "tag": "llama3.2",
+    #     "model_id": "meta-llama/Llama-3.2-1B-Instruct",
+    #     "use_model_sharding": False,
+    #     "strict_gpu_sharding": False,
+    #     "target_device": "cuda:0",
+    # },
+    # {
+    #     "tag": "qwen2.5",
+    #     "model_id": "Qwen/Qwen2.5-7B-Instruct",
+    #     "use_model_sharding": False,
+    #     "strict_gpu_sharding": False,
+    #     "target_device": "cuda:0",
+    # },
 ]
 
 

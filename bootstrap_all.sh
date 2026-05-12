@@ -10,7 +10,7 @@ bash "$ROOT_DIR/download_datasets.sh" "$@"
 if [[ -x "$DEFAULT_VENV_PY" ]]; then
   PYTHON_BIN="${PYTHON_BIN:-$DEFAULT_VENV_PY}"
 else
-  PYTHON_BIN="${PYTHON_BIN:-python3}"
+  PYTHON_BIN="${PYTHON_BIN:-python}"
 fi
 
 "$PYTHON_BIN" "$ROOT_DIR/generate_configs.py" --overwrite

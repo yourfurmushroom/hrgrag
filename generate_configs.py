@@ -146,6 +146,10 @@ def build_config_text(job: Dict[str, str]) -> str:
             "MODEL_FILTER=",
             "OUTPUT_FILE=",
             "DETAIL_CSV=",
+            "CUDA_VISIBLE_DEVICES=0,1",
+            "TARGET_DEVICE=cuda:0,cuda:1",
+            "ENABLE_MODEL_SHARDING=1",
+            "STRICT_GPU_SHARDING=1",
         ]
     )
 
