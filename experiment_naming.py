@@ -12,6 +12,8 @@ def build_run_tag(
     mlpq_pair: str = "en-zh",
     mlpq_question_lang: str = "en",
     mlpq_fusion: str = "ills",
+    mlpq_kb_mode: str = "bilingual",
+    mlpq_kb_lang: str = "auto",
     custom_dataset_name: str = "custom",
 ) -> str:
     dataset = (dataset or "metaqa").lower()
@@ -34,6 +36,11 @@ def build_run_tag(
     pair = (mlpq_pair or "en-zh").lower()
     question_lang = (mlpq_question_lang or "en").lower()
     fusion = (mlpq_fusion or "ills").lower()
+    kb_mode = (mlpq_kb_mode or "bilingual").lower()
+    kb_lang = (mlpq_kb_lang or "auto").lower()
+    if kb_mode == "monolingual":
+        lang_suffix = question_lang if kb_lang == "auto" else kb_lang
+        return f"mlpq-{pair}-{question_lang}-{fusion}-mono-{lang_suffix}"
     return f"mlpq-{pair}-{question_lang}-{fusion}"
 
 

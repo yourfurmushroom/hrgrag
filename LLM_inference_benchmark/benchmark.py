@@ -7,6 +7,7 @@ import hashlib
 import pickle
 import time
 import gc
+import math
 import torch
 import pandas as pd
 import sys
@@ -18,7 +19,7 @@ from tqdm import tqdm
 from huggingface_hub import login
 from knowledgegraph_agent import KnowledgeGraphAgent
 from baseline import BaselineKnowledgeGraphAgent as BaselineAgent
-from dataset_utils import load_custom_dataset, load_metaqa_dataset, load_mlpq_dataset, load_normalized_jsonl_dataset, load_wikimovies_dataset, resolve_mlpq_kb_path
+from dataset_utils import load_custom_dataset, load_metaqa_dataset, load_mlpq_dataset, load_normalized_jsonl_dataset, load_wikimovies_dataset, resolve_mlpq_kb_path, normalize_kb_token
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from experiment_naming import build_run_tag, with_run_tag, grammar_candidate_paths
 # ==========================================
@@ -82,7 +83,7 @@ MODEL_BACKBONES = [
     },
     {
         "tag": "llama3.2",
-        "model_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "model_id": "google/gemma-4-E4B",
         "use_model_sharding": False,
         "strict_gpu_sharding": False,
         "target_device": "cuda:0",
@@ -289,6 +290,29 @@ ANSWER_METRIC_KEYS = [
     "answer_set_f1",
 ]
 
+RETRIEVAL_RANK_METRIC_KEYS = [
+    "retrieval_recall_at_1",
+    "retrieval_recall_at_3",
+    "retrieval_recall_at_5",
+    "retrieval_ndcg_at_1",
+    "retrieval_ndcg_at_3",
+    "retrieval_ndcg_at_5",
+]
+
+CLAIM_METRIC_KEYS = [
+    "claim_faithfulness",
+    "claim_hallucination",
+]
+
+EVIDENCE_METRIC_KEYS = [
+    "evidence_precision",
+    "evidence_recall",
+    "evidence_f1",
+    "citation_correctness",
+]
+
+EXTRA_METRIC_KEYS = RETRIEVAL_RANK_METRIC_KEYS + CLAIM_METRIC_KEYS + EVIDENCE_METRIC_KEYS
+
 LEGACY_ANSWER_METRIC_KEYS = [
     "bleu",
     "answer_recall",
@@ -315,6 +339,8 @@ def parse_args():
     parser.add_argument("--mlpq-pair", choices=["en-zh", "en-fr", "zh-fr"], default="en-zh")
     parser.add_argument("--mlpq-question-lang", choices=["en", "fr", "zh"], default="en")
     parser.add_argument("--mlpq-fusion", choices=["ills", "nmn"], default="ills")
+    parser.add_argument("--mlpq-kb-mode", choices=["bilingual", "monolingual"], default="bilingual")
+    parser.add_argument("--mlpq-kb-lang", choices=["auto", "en", "fr", "zh"], default="auto")
     parser.add_argument("--custom-dataset-name", default="custom", help="Portable tag used for custom dataset runs.")
     parser.add_argument("--custom-format", choices=["auto", "tsv", "jsonl"], default="auto")
     parser.add_argument("--custom-hop", type=int, default=1, help="Fallback hop value for custom datasets.")
@@ -376,6 +402,8 @@ def resolve_run_tag(args):
         mlpq_pair=args.mlpq_pair,
         mlpq_question_lang=args.mlpq_question_lang,
         mlpq_fusion=args.mlpq_fusion,
+        mlpq_kb_mode=args.mlpq_kb_mode,
+        mlpq_kb_lang=args.mlpq_kb_lang,
         custom_dataset_name=args.custom_dataset_name,
     )
 
@@ -595,6 +623,171 @@ def calculate_metrics(references, candidate, dataset: Optional[str] = None):
     }
 
 
+def unpack_dataset_record(record):
+    if isinstance(record, tuple):
+        if len(record) >= 3:
+            return record[0], record[1], record[2]
+        if len(record) == 2:
+            return record[0], record[1], {}
+    raise ValueError(f"Unsupported dataset record format: {type(record)}")
+
+
+def _edge_parts(edge):
+    if isinstance(edge, dict):
+        return edge.get("head", ""), edge.get("relation", ""), edge.get("tail", "")
+    if isinstance(edge, (list, tuple)) and len(edge) >= 3:
+        return str(edge[0]), str(edge[1]), str(edge[2])
+    return "", "", ""
+
+
+def _compute_edge_answer_coverage(edges, references, dataset: Optional[str] = None) -> float:
+    if not references or not edges:
+        return 0.0
+
+    nodes_in_subgraph = set()
+    for edge in edges:
+        h, _, t = _edge_parts(edge)
+        for token in (h, t):
+            norm = normalize_answer(token, dataset=dataset)
+            if norm:
+                nodes_in_subgraph.add(norm)
+
+    if not nodes_in_subgraph:
+        return 0.0
+
+    hit_count = 0
+    ref_norms = [normalize_answer(ref, dataset=dataset) for ref in references]
+    for ref_norm in ref_norms:
+        if not ref_norm:
+            continue
+        for node_norm in nodes_in_subgraph:
+            if ref_norm in node_norm or node_norm in ref_norm:
+                hit_count += 1
+                break
+    return hit_count / len(ref_norms) if ref_norms else 0.0
+
+
+def calculate_retrieval_ranking_metrics(candidates, references, dataset: Optional[str] = None):
+    if not references:
+        return {key: None for key in RETRIEVAL_RANK_METRIC_KEYS}
+
+    if not candidates:
+        return {key: 0.0 for key in RETRIEVAL_RANK_METRIC_KEYS}
+
+    relevances = []
+    for cand in candidates:
+        rel = cand.get("retrieval_recall")
+        if rel is None:
+            rel = _compute_edge_answer_coverage(cand.get("edges", []), references, dataset=dataset)
+        relevances.append(float(rel or 0.0))
+
+    positive_total = sum(1 for rel in relevances if rel > 0.0)
+
+    def recall_at(k: int) -> float:
+        if positive_total <= 0:
+            return 0.0
+        return sum(1 for rel in relevances[:k] if rel > 0.0) / positive_total
+
+    def ndcg_at(k: int) -> float:
+        topk = relevances[:k]
+        if not topk:
+            return 0.0
+        dcg = sum(((2 ** rel) - 1.0) / math.log2(idx + 2) for idx, rel in enumerate(topk))
+        ideal = sorted(relevances, reverse=True)[:k]
+        idcg = sum(((2 ** rel) - 1.0) / math.log2(idx + 2) for idx, rel in enumerate(ideal))
+        return (dcg / idcg) if idcg > 0 else 0.0
+
+    return {
+        "retrieval_recall_at_1": recall_at(1),
+        "retrieval_recall_at_3": recall_at(3),
+        "retrieval_recall_at_5": recall_at(5),
+        "retrieval_ndcg_at_1": ndcg_at(1),
+        "retrieval_ndcg_at_3": ndcg_at(3),
+        "retrieval_ndcg_at_5": ndcg_at(5),
+    }
+
+
+def calculate_claim_metrics(candidate, edges, dataset: Optional[str] = None):
+    claims = split_candidate_answers(candidate, dataset=dataset)
+    if not claims or not edges:
+        return {key: None for key in CLAIM_METRIC_KEYS}
+
+    support_texts = set()
+    for edge in edges:
+        h, r, t = _edge_parts(edge)
+        for item in (h, r, t, f"{h} {r} {t}"):
+            norm = normalize_answer(item, dataset=dataset)
+            if norm:
+                support_texts.add(norm)
+
+    if not support_texts:
+        return {key: None for key in CLAIM_METRIC_KEYS}
+
+    supported = 0
+    for claim in claims:
+        if any(claim in support or support in claim for support in support_texts):
+            supported += 1
+
+    faithfulness = supported / len(claims) if claims else None
+    hallucination = (len(claims) - supported) / len(claims) if claims else None
+    return {
+        "claim_faithfulness": faithfulness,
+        "claim_hallucination": hallucination,
+    }
+
+
+def _normalized_edge_tuple(head: str, relation: str, tail: str):
+    return (
+        normalize_kb_token(head),
+        normalize_kb_token(relation),
+        normalize_kb_token(tail),
+    )
+
+
+def calculate_evidence_metrics(details, metadata):
+    gold_path_parts = (metadata or {}).get("gold_path_parts") or []
+    if len(gold_path_parts) < 3:
+        return {key: None for key in EVIDENCE_METRIC_KEYS}
+
+    gold_edges = []
+    gold_chain = []
+    for i in range(0, len(gold_path_parts) - 2, 2):
+        head = gold_path_parts[i]
+        relation = gold_path_parts[i + 1]
+        tail = gold_path_parts[i + 2]
+        gold_edges.append(_normalized_edge_tuple(head, relation, tail))
+        gold_chain.append(normalize_kb_token(relation))
+
+    predicted_spine = details.get("spine_edges") or []
+    predicted_edges = {
+        _normalized_edge_tuple(*_edge_parts(edge))
+        for edge in predicted_spine
+    }
+    gold_edge_set = set(gold_edges)
+    overlap = len(predicted_edges & gold_edge_set)
+
+    precision = (overlap / len(predicted_edges)) if predicted_edges else 0.0
+    recall = (overlap / len(gold_edge_set)) if gold_edge_set else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+
+    selected_chain = [normalize_kb_token(rel[:-3] if rel.endswith("^-1") else rel) for rel in (details.get("selected_chain") or [])]
+    citation_correctness = 1.0 if selected_chain and selected_chain == gold_chain else 0.0
+
+    return {
+        "evidence_precision": precision,
+        "evidence_recall": recall,
+        "evidence_f1": f1,
+        "citation_correctness": citation_correctness,
+    }
+
+
+def average_metric(results, key):
+    values = [r.get(key) for r in results if r.get(key) is not None]
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
 def get_hop(dataset_name: str) -> int:
     try:
         return int(dataset_name.split("-")[0])
@@ -647,6 +840,7 @@ async def async_evaluate_question(
     is_baseline=False,
     shared_prepare_path: Optional[str] = None,
     dataset_key: Optional[str] = None,
+    metadata: Optional[dict] = None,
 ):
     async with SEM:
         try:
@@ -694,6 +888,13 @@ async def async_evaluate_question(
                     "generation_latency": answer_bundle.get("generation_latency", answer_bundle.get("elapsed", 0.0)),
                     "generation_failed": answer_bundle.get("generation_failed", False),
                     "answerable": bool((response or "").strip()),
+                    "edges": prepared.get("edges", []),
+                    "candidates": prepared.get("candidates", []),
+                    "spine_edges": prepared.get("spine_edges", []),
+                    "expanded_edges": prepared.get("expanded_edges", []),
+                    "selected_candidate": prepared.get("selected_candidate", {}),
+                    "selected_chain": prepared.get("selected_chain", []),
+                    "selected_entity": prepared.get("selected_entity"),
                 }
             elif is_baseline and hop_override is not None:
                 response = await agent.ask(
@@ -707,11 +908,25 @@ async def async_evaluate_question(
 
             elapsed = time.time() - start_time
             metrics = calculate_metrics(references, response, dataset=dataset_key)
+            retrieval_rank_metrics = calculate_retrieval_ranking_metrics(
+                (details or {}).get("candidates", []),
+                references,
+                dataset=dataset_key,
+            )
+            claim_metrics = calculate_claim_metrics(
+                response,
+                (details or {}).get("edges", []),
+                dataset=dataset_key,
+            )
+            evidence_metrics = calculate_evidence_metrics(details or {}, metadata or {})
             pbar.update(1)
 
             payload = {
                 "answer": response,
                 **metrics,
+                **retrieval_rank_metrics,
+                **claim_metrics,
+                **evidence_metrics,
                 "elapsed": float(elapsed),
                 "failure_stage": (details or {}).get("failure_stage", "ok"),
                 "parse_latency": float((details or {}).get("parse_latency", 0.0) or 0.0),
@@ -728,6 +943,9 @@ async def async_evaluate_question(
                 "model_output": response,
                 "model_payload": json.dumps(payload, ensure_ascii=False),
                 **metrics,
+                **retrieval_rank_metrics,
+                **claim_metrics,
+                **evidence_metrics,
                 "elapsed": float(elapsed),
                 "failure_stage": payload["failure_stage"],
                 "parse_latency": payload["parse_latency"],
@@ -750,6 +968,9 @@ async def async_evaluate_question(
                 "model_payload": json.dumps({
                     "answer": "",
                     **{key: 0.0 for key in ANSWER_METRIC_KEYS},
+                    **{key: 0.0 for key in RETRIEVAL_RANK_METRIC_KEYS},
+                    **{key: None for key in CLAIM_METRIC_KEYS},
+                    **{key: None for key in EVIDENCE_METRIC_KEYS},
                     "elapsed": 0.0,
                     "error": err_str,
                     "failure_stage": failure_stage,
@@ -760,6 +981,9 @@ async def async_evaluate_question(
                     "answerable": False,
                 }, ensure_ascii=False),
                 **{key: 0.0 for key in ANSWER_METRIC_KEYS},
+                **{key: 0.0 for key in RETRIEVAL_RANK_METRIC_KEYS},
+                **{key: None for key in CLAIM_METRIC_KEYS},
+                **{key: None for key in EVIDENCE_METRIC_KEYS},
                 "elapsed": 0.0,
                 "error": err_str,
                 "failure_stage": failure_stage,
@@ -825,7 +1049,8 @@ async def evaluate_single_model(
         )
 
         tasks = []
-        for idx, (question, references) in enumerate(dataset):
+        for idx, record in enumerate(dataset):
+            question, references, metadata = unpack_dataset_record(record)
             shared_prepare_path = (
                 os.path.join(shared_prepare_dir, f"q_{idx:04d}.prepared.pkl")
                 if shared_prepare_dir else None
@@ -842,6 +1067,7 @@ async def evaluate_single_model(
                     is_baseline=is_baseline,
                     shared_prepare_path=shared_prepare_path,
                     dataset_key=benchmark_dataset_name,
+                    metadata=metadata,
                 )
             )
 
@@ -875,10 +1101,18 @@ async def evaluate_single_model(
             key: (sum(r.get(key, 0.0) for r in results) / count if count > 0 else 0.0)
             for key in ANSWER_METRIC_KEYS
         }
+        avg_extra_metrics = {
+            key: average_metric(results, key)
+            for key in EXTRA_METRIC_KEYS
+        }
         avg_time = total_time / count if count > 0 else 0
 
         model_results[dataset_name] = {
             **{key: round(value, 4) for key, value in avg_metrics.items()},
+            **{
+                key: (round(value, 4) if value is not None else None)
+                for key, value in avg_extra_metrics.items()
+            },
             "avg_latency": round(avg_time, 2),
         }
 
@@ -925,6 +1159,13 @@ async def evaluate_single_model(
         **{
             key: round(sum(d.get(key, 0.0) for d in all_results) / dataset_count, 4) if dataset_count else 0.0
             for key in ANSWER_METRIC_KEYS
+        },
+        **{
+            key: (
+                round(sum(d.get(key, 0.0) for d in all_results if d.get(key) is not None) / len([d for d in all_results if d.get(key) is not None]), 4)
+                if any(d.get(key) is not None for d in all_results) else None
+            )
+            for key in EXTRA_METRIC_KEYS
         },
         "avg_latency": round(sum(d["avg_latency"] for d in all_results) / dataset_count, 2) if dataset_count else 0.0,
     }
@@ -979,7 +1220,14 @@ async def main():
             )
             if args.dataset == "wikimovies"
             else (
-                resolve_mlpq_kb_path(args.dataset_root or DEFAULT_MLPQ_ROOT, args.mlpq_pair, args.mlpq_fusion)
+                resolve_mlpq_kb_path(
+                    args.dataset_root or DEFAULT_MLPQ_ROOT,
+                    args.mlpq_pair,
+                    args.mlpq_fusion,
+                    kb_mode=args.mlpq_kb_mode,
+                    kb_lang=None if args.mlpq_kb_lang == "auto" else args.mlpq_kb_lang,
+                    question_lang=args.mlpq_question_lang,
+                )
                 if args.dataset == "mlpq"
                 else None
             )

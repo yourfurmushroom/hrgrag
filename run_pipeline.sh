@@ -51,6 +51,8 @@ WIKIMOVIES_SUBSET="${WIKIMOVIES_SUBSET:-wiki_entities}"
 MLPQ_PAIR="${MLPQ_PAIR:-en-zh}"
 MLPQ_QUESTION_LANG="${MLPQ_QUESTION_LANG:-en}"
 MLPQ_FUSION="${MLPQ_FUSION:-ills}"
+MLPQ_KB_MODE="${MLPQ_KB_MODE:-bilingual}"
+MLPQ_KB_LANG="${MLPQ_KB_LANG:-auto}"
 CUSTOM_DATASET_NAME="${CUSTOM_DATASET_NAME:-custom}"
 CUSTOM_FORMAT="${CUSTOM_FORMAT:-auto}"
 CUSTOM_HOP="${CUSTOM_HOP:-1}"
@@ -90,7 +92,15 @@ build_run_tag() {
       printf 'wikimovies-%s-%s' "$WIKIMOVIES_SUBSET" "$SPLIT"
       ;;
     mlpq)
-      printf 'mlpq-%s-%s-%s' "$MLPQ_PAIR" "$MLPQ_QUESTION_LANG" "$MLPQ_FUSION"
+      if [[ "${MLPQ_KB_MODE,,}" == "monolingual" ]]; then
+        local mono_lang="${MLPQ_KB_LANG,,}"
+        if [[ "$mono_lang" == "auto" || -z "$mono_lang" ]]; then
+          mono_lang="${MLPQ_QUESTION_LANG,,}"
+        fi
+        printf 'mlpq-%s-%s-%s-mono-%s' "$MLPQ_PAIR" "$MLPQ_QUESTION_LANG" "$MLPQ_FUSION" "$mono_lang"
+      else
+        printf 'mlpq-%s-%s-%s' "$MLPQ_PAIR" "$MLPQ_QUESTION_LANG" "$MLPQ_FUSION"
+      fi
       ;;
     wqsp|cwq|kqapro|mintaka)
       printf '%s-%s' "$DATASET" "${SPLIT,,}"
@@ -129,7 +139,22 @@ if [[ -z "${KB_PATH:-}" ]]; then
   case "$DATASET" in
     metaqa) KB_PATH="$DEFAULT_METAQA_ROOT/kb.txt" ;;
     wikimovies) KB_PATH="$DEFAULT_WIKIMOVIES_ROOT/movieqa/knowledge_source/wiki_entities/wiki_entities_kb.txt" ;;
-    mlpq) KB_PATH="$DEFAULT_MLPQ_ROOT/datasets/KGs/fusion_bilingual_KGs/ILLs_fusion/merged_ILLs_KG_en_zh.txt" ;;
+    mlpq)
+      if [[ "${MLPQ_KB_MODE,,}" == "monolingual" ]]; then
+        mono_lang="${MLPQ_KB_LANG,,}"
+        if [[ "$mono_lang" == "auto" || -z "$mono_lang" ]]; then
+          mono_lang="${MLPQ_QUESTION_LANG,,}"
+        fi
+        KB_PATH="$DEFAULT_MLPQ_ROOT/datasets/KGs/sampled_monolingual_KGs/Sampled_${mono_lang}.txt"
+      else
+        pair_key="${MLPQ_PAIR//-/_}"
+        if [[ "${MLPQ_FUSION,,}" == "nmn" ]]; then
+          KB_PATH="$DEFAULT_MLPQ_ROOT/datasets/KGs/fusion_bilingual_KGs/NMN_fusion/merged_NMN_KG_${pair_key}.txt"
+        else
+          KB_PATH="$DEFAULT_MLPQ_ROOT/datasets/KGs/fusion_bilingual_KGs/ILLs_fusion/merged_ILLs_KG_${pair_key}.txt"
+        fi
+      fi
+      ;;
     kqapro) KB_PATH="$DEFAULT_KQAPRO_ROOT/kqapro_kb_triples.tsv" ;;
   esac
 fi
@@ -145,6 +170,8 @@ GRAMMAR_ARGS=(
   --mlpq-pair "$MLPQ_PAIR"
   --mlpq-question-lang "$MLPQ_QUESTION_LANG"
   --mlpq-fusion "$MLPQ_FUSION"
+  --mlpq-kb-mode "$MLPQ_KB_MODE"
+  --mlpq-kb-lang "$MLPQ_KB_LANG"
   --custom-dataset-name "$CUSTOM_DATASET_NAME"
   --out-dir "$GRAMMAR_OUT_DIR"
 )
@@ -157,6 +184,8 @@ BENCHMARK_ARGS=(
   --mlpq-pair "$MLPQ_PAIR"
   --mlpq-question-lang "$MLPQ_QUESTION_LANG"
   --mlpq-fusion "$MLPQ_FUSION"
+  --mlpq-kb-mode "$MLPQ_KB_MODE"
+  --mlpq-kb-lang "$MLPQ_KB_LANG"
   --custom-dataset-name "$CUSTOM_DATASET_NAME"
   --custom-format "$CUSTOM_FORMAT"
   --custom-hop "$CUSTOM_HOP"

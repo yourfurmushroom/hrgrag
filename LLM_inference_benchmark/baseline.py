@@ -223,6 +223,55 @@ class BaselineKnowledgeGraphAgent:
             return aliases[0]
         return node.replace("_", " ")
 
+    def _candidate_lookup_keys(self, entity: str) -> List[str]:
+        normalized = normalize_lookup_key(entity)
+        return [
+            entity.lower().strip(),
+            entity.lower().replace(" ", "_"),
+            entity.lower().replace("_", " "),
+            re.sub(r"[^\w\s]", "", entity).lower().replace(" ", "_"),
+            normalized,
+            normalized.replace(" ", "_"),
+            normalized.replace(" ", ""),
+        ]
+
+    def _token_overlap_entity_fallback(self, entity: str, max_scan: int = 2000) -> Optional[str]:
+        normalized = normalize_lookup_key(entity)
+        query_tokens = [t for t in normalized.split() if len(t) >= 2]
+        if not query_tokens:
+            compact = normalized.replace(" ", "")
+            return self._node_index.get(compact)
+
+        candidates: List[Tuple[int, int, str]] = []
+        scanned = 0
+        seen_nodes: Set[str] = set()
+        for alias_key, node in self._node_index.items():
+            if node in seen_nodes:
+                continue
+            seen_nodes.add(node)
+            scanned += 1
+            if scanned > max_scan:
+                break
+
+            alias_norm = normalize_lookup_key(alias_key)
+            if not alias_norm:
+                continue
+            alias_tokens = set(alias_norm.split())
+            overlap = sum(1 for token in query_tokens if token in alias_tokens or token in alias_norm)
+            if overlap <= 0:
+                continue
+
+            contains_bonus = 2 if normalized and (normalized in alias_norm or alias_norm in normalized) else 0
+            exact_bonus = 4 if alias_norm == normalized else 0
+            score = overlap * 10 + contains_bonus + exact_bonus
+            candidates.append((score, len(alias_norm), node))
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda x: (-x[0], x[1], x[2]))
+        return candidates[0][2]
+
     # ============================================================
     # Intent Parsing（只需要 entity，不需要 chain）
     # ============================================================
@@ -274,20 +323,14 @@ class BaselineKnowledgeGraphAgent:
         if entity in self.all_nodes:
             return entity
 
-        normalized = normalize_lookup_key(entity)
-
         # 2. index 查 (handles 底線↔空格 + lowercase)
-        for key in (
-            entity.lower().strip(),
-            entity.lower().replace(" ", "_"),
-            entity.lower().replace("_", " "),
-            re.sub(r"[^\w\s]", "", entity).lower().replace(" ", "_"),
-            normalized,
-            normalized.replace(" ", "_"),
-            normalized.replace(" ", ""),
-        ):
+        for key in self._candidate_lookup_keys(entity):
             if key in self._node_index:
                 return self._node_index[key]
+
+        fallback = self._token_overlap_entity_fallback(entity)
+        if fallback:
+            return fallback
 
         print(f"[Lookup] Entity '{entity}' not found in KB")
         return None
@@ -637,6 +680,21 @@ class BaselineKnowledgeGraphAgent:
                     "parse2_tokens": p2_tokens,
                     "context_tokens": context_tokens,
                 }
+                })
+
+        candidate_payload = []
+        if edges:
+            candidate_payload.append({
+                "entity": entity,
+                "chain": [],
+                "source": "baseline_bfs",
+                "edges": edges,
+                "spine_edges": edges,
+                "expanded_edges": [],
+                "retrieval_recall": retrieval_recall,
+                "retrieval_precision": retrieval_precision,
+                "retrieval_f1": retrieval_f1,
+                "subgraph_size": subgraph_size,
             })
 
         return {
@@ -647,6 +705,13 @@ class BaselineKnowledgeGraphAgent:
             "generation_latency": generation_latency,
             "generation_failed": generation_failed,
             "answerable": bool((answer or "").strip()),
+            "edges": edges,
+            "candidates": candidate_payload,
+            "spine_edges": edges,
+            "expanded_edges": [],
+            "selected_candidate": candidate_payload[0] if candidate_payload else {},
+            "selected_chain": [],
+            "selected_entity": entity,
         }
 
 

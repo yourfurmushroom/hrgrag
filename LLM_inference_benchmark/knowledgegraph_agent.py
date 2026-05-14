@@ -326,6 +326,78 @@ class KnowledgeGraphAgent:
             return aliases[0]
         return self._desanitize(node)
 
+    def _candidate_lookup_keys(self, entity: str) -> List[str]:
+        normalized = normalize_lookup_key(entity)
+        return [
+            entity.lower().strip(),
+            entity.lower().replace(" ", "_").strip(),
+            entity.lower().replace("_", " ").strip(),
+            re.sub(r"[^\w\s\.]", "", entity).lower().replace(" ", "_"),
+            normalized,
+            normalized.replace(" ", "_"),
+            normalized.replace(" ", ""),
+        ]
+
+    def _token_overlap_entity_fallback(self, entity: str, max_scan: int = 2000) -> Optional[str]:
+        normalized = normalize_lookup_key(entity)
+        query_tokens = [t for t in normalized.split() if len(t) >= 2]
+        if not query_tokens:
+            compact = normalized.replace(" ", "")
+            return self._node_index.get(compact)
+
+        candidates: List[Tuple[int, int, str, str]] = []
+        scanned = 0
+        seen_nodes: Set[str] = set()
+        for alias_key, node in self._node_index.items():
+            if node in seen_nodes:
+                continue
+            seen_nodes.add(node)
+            scanned += 1
+            if scanned > max_scan:
+                break
+
+            alias_norm = normalize_lookup_key(alias_key)
+            if not alias_norm:
+                continue
+            alias_tokens = set(alias_norm.split())
+            overlap = sum(1 for token in query_tokens if token in alias_tokens or token in alias_norm)
+            if overlap <= 0:
+                continue
+
+            contains_bonus = 2 if normalized and (normalized in alias_norm or alias_norm in normalized) else 0
+            exact_bonus = 4 if alias_norm == normalized else 0
+            score = overlap * 10 + contains_bonus + exact_bonus
+            candidates.append((score, len(alias_norm), node, alias_norm))
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda x: (-x[0], x[1], x[2]))
+        return candidates[0][2]
+
+    def _relation_neighbors_for_entity(self, entity: Optional[str], max_relations: int = 48) -> List[str]:
+        node = self._resolve_entity_to_kb(entity)
+        if not node:
+            return []
+
+        relation_scores: Dict[str, int] = defaultdict(int)
+
+        for rel, tails in self.kb_out.get(node, {}).items():
+            relation_scores[rel] += 100 + min(len(tails), 10)
+            inv = f"{rel}^-1"
+            if inv in self.allowed_rel_tokens:
+                relation_scores[inv] += 10
+
+        for rel, heads in self.kb_in.get(node, {}).items():
+            inv = f"{rel}^-1"
+            if inv in self.allowed_rel_tokens:
+                relation_scores[inv] += 100 + min(len(heads), 10)
+            if rel in self.allowed_rel_tokens:
+                relation_scores[rel] += 10
+
+        ranked = sorted(relation_scores.items(), key=lambda x: (-x[1], x[0]))
+        return [rel for rel, _ in ranked[:max_relations]]
+
     def _resolve_entity_to_kb(self, entity: Optional[str]) -> Optional[str]:
         if not entity:
             return None
@@ -334,20 +406,11 @@ class KnowledgeGraphAgent:
         if sanitized in self.all_nodes:
             return sanitized
 
-        normalized = normalize_lookup_key(entity)
-        for key in (
-            entity.lower().strip(),
-            entity.lower().replace(" ", "_").strip(),
-            entity.lower().replace("_", " ").strip(),
-            re.sub(r"[^\w\s\.]", "", entity).lower().replace(" ", "_"),
-            normalized,
-            normalized.replace(" ", "_"),
-            normalized.replace(" ", ""),
-        ):
+        for key in self._candidate_lookup_keys(entity):
             if key in self._node_index:
                 return self._node_index[key]
 
-        return None
+        return self._token_overlap_entity_fallback(entity)
 
     def _fuzzy_match_relation(self, raw: str) -> Optional[str]:
         if raw in self.allowed_rel_tokens:
@@ -404,6 +467,11 @@ class KnowledgeGraphAgent:
 
         question_terms = set(self._normalize_match_text(user_prompt).split())
         scored: List[Tuple[int, str]] = []
+        prioritized_entity = self._normalize_entity_from_question(user_prompt, None)
+
+        for rel in self._relation_neighbors_for_entity(prioritized_entity, max_relations=min(limit, 48)):
+            scored.append((40, rel))
+
         for rel in sorted(self.allowed_rel_tokens):
             rel_terms = set(self._normalize_match_text(rel).split())
             overlap = len(question_terms & rel_terms)
@@ -1914,6 +1982,13 @@ class KnowledgeGraphAgent:
             "generation_latency": result.get("generation_latency", result.get("elapsed", 0.0)),
             "generation_failed": result.get("generation_failed", False),
             "answerable": bool((result.get("answer") or "").strip()),
+            "edges": prepared.get("edges", []),
+            "candidates": prepared.get("candidates", []),
+            "spine_edges": prepared.get("spine_edges", []),
+            "expanded_edges": prepared.get("expanded_edges", []),
+            "selected_candidate": prepared.get("selected_candidate", {}),
+            "selected_chain": prepared.get("selected_chain", []),
+            "selected_entity": prepared.get("selected_entity"),
         }
 
     async def _correct_candidates_with_llm(

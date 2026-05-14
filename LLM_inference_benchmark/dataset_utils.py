@@ -298,7 +298,19 @@ def _resolve_mlpq_question_file(root: str, pair: str, hop: int, question_lang: s
     return Path(root) / "datasets" / "Questions" / pair_dir / f"{hop}-hop" / filename
 
 
-def resolve_mlpq_kb_path(root: str, pair: str, fusion: str) -> str:
+def resolve_mlpq_kb_path(
+    root: str,
+    pair: str,
+    fusion: str,
+    kb_mode: str = "bilingual",
+    kb_lang: Optional[str] = None,
+    question_lang: Optional[str] = None,
+) -> str:
+    kb_mode = (kb_mode or "bilingual").lower()
+    if kb_mode == "monolingual":
+        lang = (kb_lang or question_lang or "en").lower()
+        return str(Path(root) / "datasets" / "KGs" / "sampled_monolingual_KGs" / f"Sampled_{lang}.txt")
+
     pair_key = pair.lower().replace("-", "_")
     fusion_dir = "ILLs_fusion" if fusion.lower() == "ills" else "NMN_fusion"
     file_prefix = "merged_ILLs_KG" if fusion.lower() == "ills" else "merged_NMN_KG"
@@ -310,8 +322,8 @@ def load_mlpq_dataset(
     pair: str = "en-zh",
     question_lang: str = "en",
     inject_topic_entity: bool = True,
-) -> Dict[str, List[Tuple[str, List[str]]]]:
-    grouped: Dict[str, List[Tuple[str, List[str]]]] = defaultdict(list)
+) -> Dict[str, List[Tuple[str, List[str], Dict[str, object]]]]:
+    grouped: Dict[str, List[Tuple[str, List[str], Dict[str, object]]]] = defaultdict(list)
     for hop in (2, 3):
         question_file = _resolve_mlpq_question_file(root, pair, hop, question_lang)
         if not question_file.exists():
@@ -338,7 +350,18 @@ def load_mlpq_dataset(
                     if candidate and candidate not in answers:
                         answers.append(candidate)
                 if answers:
-                    grouped[f"{hop}-hop"].append((question_text, answers))
+                    grouped[f"{hop}-hop"].append((
+                        question_text,
+                        answers,
+                        {
+                            "gold_path_raw": path_raw,
+                            "gold_path_parts": path_parts,
+                            "topic_entity": topic_entity,
+                            "pair": pair.lower(),
+                            "question_lang": question_lang.lower(),
+                            "hop": hop,
+                        },
+                    ))
     return dict(grouped)
 
 

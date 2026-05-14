@@ -588,6 +588,8 @@ if __name__ == "__main__":
     parser.add_argument("--mlpq-pair", default="en-zh")
     parser.add_argument("--mlpq-question-lang", default="en")
     parser.add_argument("--mlpq-fusion", default="ills")
+    parser.add_argument("--mlpq-kb-mode", default="bilingual")
+    parser.add_argument("--mlpq-kb-lang", default="auto")
     parser.add_argument("--custom-dataset-name", default="custom")
     parser.add_argument("--run-tag", default=None, help="Override auto-generated dataset run tag.")
     parser.add_argument("--out-root", default=OUT_DIR, help="Root directory for dataset-tagged outputs.")
@@ -608,6 +610,8 @@ if __name__ == "__main__":
         mlpq_pair=args.mlpq_pair,
         mlpq_question_lang=args.mlpq_question_lang,
         mlpq_fusion=args.mlpq_fusion,
+        mlpq_kb_mode=args.mlpq_kb_mode,
+        mlpq_kb_lang=args.mlpq_kb_lang,
         custom_dataset_name=args.custom_dataset_name,
     )
     out_dir = args.out_dir or os.path.join(args.out_root, run_tag)
