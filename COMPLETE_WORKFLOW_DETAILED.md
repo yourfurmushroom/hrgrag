@@ -147,12 +147,12 @@ Parse top-k candidates
 
 ## 1. 本文件對應的實際 artifacts
 
-目前 `artifacts/` 裡已存在三組主結果、一次 `MetaQA` 部分成功 run，與一份批次總結：
+目前 `artifacts/` 裡已存在四組完整主結果與一份較早批次總結：
 
-1. `artifacts/wikimovies-wiki_entities-test/`
-2. `artifacts/mlpq-en-zh-en-ills/`
-3. `artifacts/kqapro-validation/`
-4. `artifacts/wikimovies-wiki_entities-test/metaqa-vanilla-test/`
+1. `artifacts/metaqa-vanilla-test/`
+2. `artifacts/wikimovies-wiki_entities-test/`
+3. `artifacts/mlpq-en-zh-en-ills/`
+4. `artifacts/kqapro-validation/`
 5. `artifacts/_batch/run_all_summary.txt`
 
 批次總結目前是：
@@ -166,9 +166,9 @@ kqapro OK
 
 這份 `_batch/run_all_summary.txt` 是較早批次留下來的摘要；本次文件更新時，主表與分析一律以各 dataset `results/benchmark_results.json` 的最新內容為準。
 
-這次 artifact refresh 後，四組資料集都有完整的 `llama3.1 / llama3.2 / qwen2.5` benchmark 結果。
+這次 artifact refresh 後，四組資料集都有完整的 `llama3.1 / gemma4 / qwen2.5` benchmark 結果。
 
-所以下面的主表與分析，會以這一批更新後的完整結果為主，而不再沿用舊的 `qwen3.5` 局部 run。
+所以下面的主表與分析，會以這一批更新後的完整結果為主，而不再沿用舊的 `qwen3.5` 局部 run 或舊文件中的 `llama3.2` 結果。
 
 ---
 
@@ -2039,1115 +2039,405 @@ WikiMovies 第 0 題：
 
 ---
 
-## 9. 三個已跑完 artifacts 的結果要怎麼看
-
-下面只抓最有代表性的現象。
-
-### 9.0 先看一組統一比較口徑
-
-這次 artifact 更新後，主結果已經不再是 `qwen3.5`，而是：
-
-1. `llama3.1`
-2. `llama3.2`
-3. `qwen2.5`
-
-下面主文一律先以 `llama3.1` 當主要對照 backbone，理由是：
-
-1. 四個資料集都有完整結果
-2. 它是目前整體最穩定、最有代表性的 backbone
-3. `llama3.2` 太弱，比較像 capacity 下界
-4. `qwen2.5` 會在個別地方另外補充，尤其是 KQAPro 的最佳壓縮結果
-
-建議口試時固定先講這 7 個欄位：
-
-1. `em`
-2. `hits_at_1`
-3. `mrr`
-4. `answer_set_f1`
-5. `avg_ctx_tokens`
-6. `avg_subgraph_size`
-7. `coverage / failure_counts`
-
-因為這 7 個欄位能同時回答：
-
-1. 最終答案品質
-2. 正確答案排得多前面
-3. context 壓縮程度
-4. grammar 是否真的介入
-5. pipeline 主要失敗在哪
-
-### 9.0.0 MetaQA `llama3.1` 主要方法對照
-
-| Method | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx Tokens | Avg Subgraph Size | Coverage | 主要 Failure |
-|---|---:|---:|---:|---:|---:|---:|---:|---|
-| Baseline-BFS | 0.4433 | 0.6800 | 0.7148 | 0.5917 | 4374.22 | 364.7467 | 0.0000 | `ok=300` |
-| Spine-Only-json | 0.5233 | 0.6600 | 0.7019 | 0.6702 | 1219.5926 | 54.8889 | 0.0000 | `ok=247, no_valid_chain=50, oom=3` |
-| Spine-Correction-json | 0.5667 | 0.7133 | 0.7619 | 0.7342 | 1259.4579 | 56.5690 | 0.0000 | `ok=269, no_valid_chain=28, oom=3` |
-| Spine-GrammarExpansion-json | 0.4033 | 0.5667 | 0.6119 | 0.5750 | 1612.1959 | 71.0653 | 0.7698 | `ok=224, no_valid_chain=67, oom=9` |
-| HRG-Proposed-json | 0.4633 | 0.6433 | 0.7002 | 0.6640 | 1984.3196 | 87.2405 | 0.8866 | `ok=258, no_valid_chain=33, oom=9` |
-
-這組結果現在非常清楚：
-
-1. `Spine-Correction-llama3.1-json` 是目前 MetaQA 上的最佳整體組合
-2. 它同時比 baseline 更準，且 context 只有 baseline 的約 `28.8%`
-3. `Spine-Only` 已經能贏 baseline，表示 chain-guided retrieval 在 MetaQA 上是成立的
-4. `GrammarExpansion` 與 `HRG-Proposed` 雖然讓 `coverage` 很高，但沒有把答案表現推到最好，反而把 context 拉大
-
-如果補看 `qwen2.5`，有一個額外重點：
-
-1. `Spine-Correction-qwen2.5-json` 的 `em=0.53`
-2. `avg_ctx_tokens=277.47`
-3. 它比 `llama3.1` 更省 context，但絕對分數略低
-
-所以 MetaQA 現在最準確的說法是：
-
-1. chain-guided retrieval 在這組資料上確實有效
-2. correction 是最穩定的增益來源
-3. grammar 介入不是完全沒用，但在目前實作下沒有超過 correction-only
-
-### 9.0.1 WikiMovies `llama3.1` 主要方法對照
-
-| Method | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx Tokens | Avg Subgraph Size | Coverage | 主要 Failure |
-|---|---:|---:|---:|---:|---:|---:|---:|---|
-| Baseline-BFS | 0.1800 | 0.4500 | 0.4514 | 0.3085 | 23.23 | 1.30 | 0.0000 | `ok=100` |
-| Spine-Only-json | 0.2800 | 0.4400 | 0.4400 | 0.3489 | 34.56 | 1.48 | 0.0000 | `ok=96, no_valid_chain=4` |
-| Spine-Correction-json | 0.2800 | 0.4400 | 0.4400 | 0.3489 | 34.56 | 1.48 | 0.0000 | `ok=96, no_valid_chain=4` |
-| Spine-GrammarExpansion-json | 0.2400 | 0.4200 | 0.4200 | 0.3129 | 217.77 | 8.78 | 0.9300 | `ok=93, no_valid_chain=7` |
-| Spine-RandomExpansion-json | 0.3000 | 0.4800 | 0.4800 | 0.3775 | 127.36 | 5.09 | 0.0000 | `ok=96, no_valid_chain=4` |
-| Spine-FrequencyExpansion-json | 0.2900 | 0.4800 | 0.4800 | 0.3704 | 129.27 | 5.09 | 0.0000 | `ok=96, no_valid_chain=4` |
-| HRG-Proposed-json | 0.2500 | 0.4300 | 0.4350 | 0.3296 | 234.28 | 9.44 | 0.9700 | `ok=97, no_valid_chain=3` |
-
-這次 WikiMovies 和之前最大的差異是：
-
-1. baseline 不再是幾乎全空的 `retrieval_empty`
-2. normalized KB 與 parser 修正後，所有方法都能正常取到可答的子圖
-3. `Spine-Only` 已經比 baseline 好
-4. `RandomExpansion` 和 `FrequencyExpansion` 反而是這組裡最好的兩個擴張對照
-5. `HRG-Proposed` 的 `coverage` 幾乎滿了，但 EM 沒有贏過 `Spine-Only` / `RandomExpansion`
-
-這組最值得講的結論是：
-
-1. WikiMovies 的資料表示問題修正後，benchmark 變得可信
-2. 但在 1-hop 為主的 setting 下，grammar 介入不一定比簡單擴邊更有利
-3. 這也符合前面的方法分析：1-hop 題本來就不太能充分展現 grammar expansion 的優勢
-
-### 9.0.2 MLPQ `llama3.1` 主要方法對照
-
-| Method | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx Tokens | Avg Subgraph Size | Coverage | 主要 Failure |
-|---|---:|---:|---:|---:|---:|---:|---:|---|
-| Baseline-BFS | 0.2750 | 0.2900 | 0.3100 | 0.3112 | 6215.66 | 418.14 | 0.0000 | `ok=200` |
-| Spine-Only-json | 0.0050 | 0.0650 | 0.0909 | 0.0720 | 40.89 | 1.80 | 0.0000 | `no_valid_chain=146, ok=53, no_candidates=1` |
-| Spine-Correction-json | 0.0100 | 0.0700 | 0.0959 | 0.0770 | 41.52 | 1.825 | 0.0000 | `no_valid_chain=145, ok=54, no_candidates=1` |
-| Spine-GrammarExpansion-json | 0.0150 | 0.0300 | 0.0375 | 0.0303 | 39.98 | 1.72 | 0.1400 | `no_valid_chain=154, ok=42, no_candidates=4` |
-| Spine-RandomExpansion-json | 0.0250 | 0.0700 | 0.0909 | 0.0804 | 175.06 | 7.28 | 0.0000 | `no_valid_chain=146, ok=53, no_candidates=1` |
-| Spine-FrequencyExpansion-json | 0.0100 | 0.0650 | 0.0875 | 0.0706 | 177.76 | 7.28 | 0.0000 | `no_valid_chain=146, ok=53, no_candidates=1` |
-| HRG-Proposed-json | 0.0200 | 0.0350 | 0.0425 | 0.0353 | 143.545 | 5.665 | 0.1650 | `no_valid_chain=149, ok=47, no_candidates=4` |
-
-MLPQ 這次結果更直接，甚至比上一版更能說明問題：
-
-1. baseline 依然遠遠最好
-2. 所有 spine 系列都被 `no_valid_chain` 壓住
-3. `HRG-Proposed` 不是這組裡最強的壓縮方法
-4. 在 `llama3.1` 上，`RandomExpansion` 反而比 `HRG-Proposed` 的 EM 和 Ans-F1 更高
-
-如果把 `triple` 一起看進來，另一個值得記錄的點是：
-
-1. `Spine-RandomExpansion-llama3.1-triple` 的 `em=0.045`
-2. `avg_ctx_tokens=83.965`
-3. 這是目前 MLPQ 非 baseline 方法裡最好的 EM
-
-所以在 MLPQ 上最誠實的說法是：
-
-1. 你的方法還沒有證明 grammar prior 比簡單擴邊更好
-2. 現階段最大瓶頸仍然是 multilingual chain executability
-3. 這組比較像暴露方法限制，而不是成功案例
-
-### 9.0.3 KQAPro：目前最好的壓縮組合出現在 `qwen2.5`
-
-這組要分成兩層看：
-
-1. `llama3.1` 當主 backbone，方便和其他資料集對齊
-2. `qwen2.5` 的 `HRG-Proposed` 是目前非 baseline 的最佳結果，必須額外點名
-
-| Method | Backbone | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx Tokens | Avg Subgraph Size | Coverage | 主要 Failure |
-|---|---|---:|---:|---:|---:|---:|---:|---:|---|
-| Baseline-BFS | llama3.1 | 0.1100 | 0.1167 | 0.1208 | 0.1172 | 3173.4733 | 219.8767 | 0.0000 | `ok=236, retrieval_empty=64` |
-| Spine-Only-json | llama3.1 | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.0733 | 0.0033 | 0.0000 | `no_valid_chain=243, no_candidates=56, ok=1` |
-| Spine-Correction-json | llama3.1 | 0.0233 | 0.0233 | 0.0242 | 0.0247 | 11.8967 | 0.4633 | 0.0000 | `no_valid_chain=227, no_candidates=56, ok=17` |
-| Spine-GrammarExpansion-json | llama3.1 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.14 | 0.0067 | 0.0033 | `no_valid_chain=254, no_candidates=45, ok=1` |
-| HRG-Proposed-json | llama3.1 | 0.0233 | 0.0233 | 0.0242 | 0.0247 | 13.4233 | 0.54 | 0.0533 | `no_valid_chain=233, ok=22, no_candidates=45` |
-| HRG-Proposed-triple | llama3.1 | 0.0333 | 0.0333 | 0.0342 | 0.0347 | 6.6533 | 0.54 | 0.0533 | `no_valid_chain=233, ok=22, no_candidates=45` |
-| Baseline-BFS | qwen2.5 | 0.0833 | 0.1000 | 0.1053 | 0.1019 | 3226.6167 | 226.92 | 0.0000 | `ok=251, retrieval_empty=49` |
-| HRG-Proposed-json | qwen2.5 | 0.0433 | 0.0500 | 0.0508 | 0.0502 | 3.98 | 0.17 | 0.0367 | `no_valid_chain=261, no_candidates=15, ok=24` |
-| HRG-Proposed-triple | qwen2.5 | 0.0433 | 0.0467 | 0.0467 | 0.0456 | 1.84 | 0.17 | 0.0367 | `no_valid_chain=261, no_candidates=15, ok=24` |
-
-KQAPro 這組現在最值得講的是：
-
-1. baseline 還是明顯最強
-2. `llama3.1` 上的 spine-only 幾乎完全失效
-3. correction 有幫助，但 grammar expansion 單開幾乎沒用
-4. `qwen2.5` 的 `HRG-Proposed` 是目前所有非 baseline 方法裡最好的組合
-5. `qwen2.5` `HRG-Proposed-triple` 只用 `1.84` 個平均 context tokens，就拿到 `em=0.0433`
-
-所以 KQAPro 目前最安全的說法是：
-
-1. 你的方法確實能在極小 context 下保留一點 compositional QA 能力
-2. 但絕對效果仍遠低於 baseline
-3. 現階段最成功的非 baseline 組合不是 `llama3.1`，而是 `qwen2.5 + HRG-Proposed`
-
-### 9.0.4 JSON 與 Triple 序列化差異也要講數字
-
-這次更新後，`json` 和 `triple` 的差異比上一版更明確：
-
-1. `triple` 多數情況下仍然更省 context token
-2. 但省 token 不一定讓 EM 更高
-3. `KQAPro` 是 `triple` 最划算的例子
-4. `MetaQA` 則是 `json` 常常更準的例子
-
-例子：
-
-1. MetaQA `Spine-Correction-llama3.1`
-   - json: `em=0.5667`, `avg_ctx_tokens=1259.46`
-   - triple: `em=0.4933`, `avg_ctx_tokens=781.94`
-2. WikiMovies `Spine-Only-llama3.1`
-   - json: `em=0.28`, `avg_ctx_tokens=34.56`
-   - triple: `em=0.20`, `avg_ctx_tokens=15.89`
-3. MLPQ `HRG-Proposed-llama3.1`
-   - json: `em=0.02`, `avg_ctx_tokens=143.545`
-   - triple: `em=0.02`, `avg_ctx_tokens=72.66`
-4. KQAPro `HRG-Proposed-qwen2.5`
-   - json: `em=0.0433`, `avg_ctx_tokens=3.98`
-   - triple: `em=0.0433`, `avg_ctx_tokens=1.84`
-
-所以現在可以更精確地說：
-
-1. `triple` 的核心價值是 token efficiency
-2. `json` 在某些 backbone/dataset 上會保留更好的生成穩定性
-3. 如果目標是極端壓縮，KQAPro 會偏向 `triple`
-4. 如果目標是 MetaQA 上的最佳答案表現，目前偏向 `json`
-
-### 9.1 MetaQA：目前最支持方法假設，但最佳組合是 Correction，不是 Proposed
-
-這次 `MetaQA` 最重要的訊號比上一版更清楚：
-
-1. baseline `em=0.4433`
-2. `Spine-Only-llama3.1-json` 已經升到 `0.5233`
-3. `Spine-Correction-llama3.1-json` 再升到 `0.5667`
-
-這表示：
-
-1. chain-guided retrieval 本身有效
-2. correction 能穩定救回一批原本的 invalid chain
-3. grammar expansion 並沒有帶來同等級提升
-
-換句話說，在 MetaQA 這個最乾淨的資料集上，目前最強證據其實是：
-
-1. entity + chain parsing
-2. strict spine retrieval
-3. correction 補救
-
-而不是 grammar expansion 本身。
-
-### 9.2 WikiMovies：資料修正後，結果已可用，但 grammar 不是主贏點
-
-更新後的 WikiMovies 已經和之前完全不同：
-
-1. baseline `em=0.18`
-2. `Spine-Only-llama3.1-json` `em=0.28`
-3. `Spine-RandomExpansion-llama3.1-json` `em=0.30`
-
-這代表：
-
-1. parser 與 normalized KB 修正後，WikiMovies benchmark 現在是可用的
-2. 失敗不再主要來自資料讀壞
-3. 但 grammar-based expansion 不是這組裡最強的 gain source
-
-所以這組現在該講成：
-
-1. dataset-side 問題已經被大幅排除
-2. 但 1-hop 問題上，簡單的 random/frequency expansion 也能拿到很強結果
-3. 這使得 WikiMovies 不適合當 HRG 優勢的主證據
-
-### 9.3 MLPQ：仍然是最難、也最不利於當前方法的一組
-
-這次更新沒有改變 MLPQ 的主結論，反而讓它更明確：
-
-1. baseline `em=0.275`
-2. 最好的非 baseline 也只有 `em=0.045`
-3. 大量失敗仍然是 `no_valid_chain`
-
-而且一個關鍵細節是：
-
-1. `HRG-Proposed` 不是最佳非 baseline
-2. `Spine-RandomExpansion-llama3.1-triple` 才是目前這組中最好的非 baseline EM
-
-所以 MLPQ 最合理的分析是：
-
-1. grammar prior 還不足以穩定改善 multilingual chain execution
-2. 方法目前對這組資料仍然過度脆弱
-3. 這組最能暴露方法限制
-
-### 9.4 KQAPro：最佳壓縮結果存在，但絕對效果仍低
-
-KQAPro 的結論也比上一版更清楚：
-
-1. baseline 仍然遠勝所有 spine 系列
-2. 但 `qwen2.5 + HRG-Proposed` 是目前最好的非 baseline 組合
-3. `HRG-Proposed-qwen2.5-triple` 用極小 context 保住了一點答案能力
-
-最有代表性的數字是：
-
-1. baseline `llama3.1`: `em=0.11`, `avg_ctx_tokens=3173.47`
-2. proposed `qwen2.5-triple`: `em=0.0433`, `avg_ctx_tokens=1.84`
-
-所以這組最值得講的不是「接近 baseline」，而是：
-
-1. 在極端壓縮下，方法還保留了非零 compositional QA 能力
-2. 但如果目標是追求絕對分數，現在還遠遠不夠
+## 9. 最新完整實驗結果怎麼看
+
+本節已用目前磁碟上的最新 artifacts 覆蓋舊結果。更新時間以各資料集 `results/benchmark_results.json` 與 `all_models_outputs_wide.csv` 為準。
+
+目前四個資料集都已完整產生 `39` 個實驗結果：
+
+| Dataset | Experiments | CSV Rows | CSV Cols | Think/Echo 污染 |
+| --- | ---: | ---: | ---: | ---: |
+| MetaQA | 39 | 300 | 44 | no |
+| WikiMovies | 39 | 100 | 44 | no |
+| MLPQ | 39 | 200 | 44 | no |
+| KQAPro | 39 | 300 | 44 | no |
+
+這次完整結果的 backbone 是：`llama3.1`、`gemma4`、`qwen2.5`。舊文件中出現的 `llama3.2` 數字已不再作為本輪結果。
+
+### 9.1 跨資料集整體比較
+
+| Method | N | Avg EM | Avg Hits@1 | Avg MRR | Avg Ans-F1 | Avg Ctx | Avg RetRecall | Gen Fail |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Baseline-BFS | 12 | 0.2293 | 0.3528 | 0.3619 | 0.2976 | 3554.1 | 0.7157 | 61 |
+| HRG-Proposed-json | 12 | 0.2204 | 0.3219 | 0.3354 | 0.2915 | 278.4 | 0.4665 | 4 |
+| Spine-Correction-json | 12 | 0.2161 | 0.3071 | 0.3192 | 0.2787 | 107.9 | 0.4335 | 2 |
+| Spine-Correction-triple | 12 | 0.1862 | 0.2828 | 0.2911 | 0.2460 | 63.0 | 0.4336 | 1 |
+| HRG-Proposed-triple | 12 | 0.1833 | 0.2876 | 0.2963 | 0.2488 | 162.6 | 0.4666 | 1 |
+| Spine-Only-json | 12 | 0.0785 | 0.1089 | 0.1185 | 0.1093 | 37.5 | 0.1632 | 3 |
+| Spine-RandomExpansion-json | 12 | 0.0780 | 0.1064 | 0.1134 | 0.1038 | 139.1 | 0.1703 | 6 |
+| Spine-FrequencyExpansion-json | 12 | 0.0769 | 0.1062 | 0.1134 | 0.1033 | 140.4 | 0.1690 | 6 |
+| Spine-GrammarExpansion-json | 12 | 0.0753 | 0.1064 | 0.1125 | 0.0995 | 64.2 | 0.1710 | 2 |
+| Spine-Only-triple | 12 | 0.0711 | 0.0997 | 0.1037 | 0.0927 | 40.6 | 0.1635 | 1 |
+| Spine-RandomExpansion-triple | 12 | 0.0683 | 0.0969 | 0.1019 | 0.0908 | 98.1 | 0.1707 | 2 |
+| Spine-FrequencyExpansion-triple | 12 | 0.0680 | 0.0992 | 0.1032 | 0.0918 | 71.2 | 0.1693 | 3 |
+| Spine-GrammarExpansion-triple | 12 | 0.0620 | 0.0854 | 0.0887 | 0.0783 | 31.2 | 0.1712 | 1 |
+
+整體上，`Baseline-BFS` 仍是最高平均 EM，但 `HRG-Proposed-json` 和 `Spine-Correction-json` 用遠小於 BFS 的 context 接近 BFS 的答案品質，且 generation failure 明顯較少。
+
+### 9.2 Backbone 平均表現
+
+| Backbone | N | Avg EM | Avg Ans-F1 | Avg Ctx | Gen Fail |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| gemma4 | 52 | 0.1456 | 0.1760 | 355.3 | 77 |
+| llama3.1 | 52 | 0.1357 | 0.1950 | 438.2 | 16 |
+| qwen2.5 | 52 | 0.0911 | 0.1210 | 311.5 | 0 |
+
+`gemma4` 的平均 EM 最高，但 failures 也最多；`llama3.1` 的 Ans-F1 較高；`qwen2.5` 最穩但整體分數較低。
+
+### 9.3 各資料集最佳結果
+
+| Dataset | Best Experiment | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx | Gen Fail |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| MetaQA | Spine-Correction-llama3.1-json | 0.5433 | 0.7200 | 0.7653 | 0.7288 | 699.1 | 1 |
+| WikiMovies | HRG-Proposed-llama3.1-json | 0.2900 | 0.4700 | 0.4750 | 0.3722 | 35.1 | 0 |
+| MLPQ | Baseline-BFS-llama3.1 | 0.2650 | 0.3000 | 0.3066 | 0.2958 | 6276.2 | 0 |
+| KQAPro | Baseline-BFS-llama3.1 | 0.1000 | 0.1033 | 0.1061 | 0.1033 | 3730.7 | 0 |
+
+### 9.4 Dataset-by-dataset 解讀
+
+#### MetaQA
+
+| Rank | Experiment | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx | Avg Subgraph | Gen Fail |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | Spine-Correction-llama3.1-json | 0.5433 | 0.7200 | 0.7653 | 0.7288 | 699.1 | 32.3 | 1 |
+| 2 | Spine-Correction-gemma4-json | 0.5367 | 0.6133 | 0.6200 | 0.5802 | 183.5 | 8.0 | 0 |
+| 3 | Spine-Correction-qwen2.5-json | 0.5267 | 0.6367 | 0.6450 | 0.5976 | 153.2 | 6.6 | 0 |
+| 4 | Spine-Correction-gemma4-triple | 0.5000 | 0.5967 | 0.6083 | 0.5618 | 83.3 | 8.0 | 0 |
+| 5 | Spine-Correction-qwen2.5-triple | 0.4900 | 0.6167 | 0.6300 | 0.5728 | 70.3 | 6.6 | 0 |
+| 6 | HRG-Proposed-llama3.1-json | 0.4867 | 0.7000 | 0.7433 | 0.6885 | 1611.5 | 71.4 | 3 |
+| 7 | Spine-Correction-llama3.1-triple | 0.4800 | 0.6900 | 0.7244 | 0.6661 | 474.9 | 53.4 | 0 |
+| 8 | HRG-Proposed-gemma4-json | 0.4700 | 0.6100 | 0.6167 | 0.5532 | 632.1 | 27.8 | 1 |
+| 9 | Baseline-BFS-llama3.1 | 0.4667 | 0.6833 | 0.7145 | 0.6016 | 4356.9 | 364.7 | 0 |
+| 10 | HRG-Proposed-gemma4-triple | 0.4433 | 0.5867 | 0.5983 | 0.5340 | 307.6 | 30.1 | 0 |
+| 11 | HRG-Proposed-qwen2.5-json | 0.4433 | 0.6233 | 0.6467 | 0.5789 | 717.4 | 31.4 | 0 |
+| 12 | HRG-Proposed-llama3.1-triple | 0.4200 | 0.6967 | 0.7350 | 0.6565 | 1134.9 | 113.8 | 1 |
+
+MetaQA 是目前 HRG/Spine 最成功的資料集；`Spine-Correction` 系列明顯優於 BFS，表示 chain-guided retrieval 加 correction 在乾淨 movie KG 上成立。
+
+#### WikiMovies
+
+| Rank | Experiment | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx | Avg Subgraph | Gen Fail |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | HRG-Proposed-llama3.1-json | 0.2900 | 0.4700 | 0.4750 | 0.3722 | 35.1 | 1.5 | 0 |
+| 2 | Spine-Correction-gemma4-json | 0.2400 | 0.4200 | 0.4200 | 0.3112 | 24.2 | 1.0 | 0 |
+| 3 | HRG-Proposed-gemma4-json | 0.2400 | 0.4100 | 0.4100 | 0.3091 | 23.7 | 1.0 | 0 |
+| 4 | Spine-GrammarExpansion-gemma4-json | 0.2300 | 0.3900 | 0.3900 | 0.2941 | 22.8 | 1.0 | 0 |
+| 5 | Spine-Correction-llama3.1-json | 0.2200 | 0.4200 | 0.4200 | 0.3082 | 44.1 | 1.9 | 0 |
+| 6 | HRG-Proposed-qwen2.5-json | 0.2200 | 0.4000 | 0.4000 | 0.2918 | 25.5 | 1.1 | 0 |
+| 7 | Spine-Correction-qwen2.5-json | 0.2100 | 0.4000 | 0.4000 | 0.2901 | 41.3 | 1.3 | 0 |
+| 8 | Baseline-BFS-llama3.1 | 0.1800 | 0.4700 | 0.4714 | 0.3092 | 23.2 | 1.3 | 0 |
+| 9 | Baseline-BFS-gemma4 | 0.1800 | 0.3100 | 0.3100 | 0.2375 | 23.2 | 1.3 | 0 |
+| 10 | Spine-Correction-llama3.1-triple | 0.1700 | 0.4700 | 0.4742 | 0.2971 | 19.8 | 1.9 | 0 |
+| 11 | HRG-Proposed-llama3.1-triple | 0.1600 | 0.4300 | 0.4318 | 0.2633 | 16.6 | 1.5 | 0 |
+| 12 | Spine-Correction-gemma4-triple | 0.1600 | 0.2900 | 0.2950 | 0.2186 | 11.2 | 1.0 | 0 |
+
+WikiMovies 上最佳是 `HRG-Proposed-llama3.1-json`；JSON 格式的 HRG/Spine 方法大多優於 BFS，且 context 很小。
+
+#### MLPQ
+
+| Rank | Experiment | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx | Avg Subgraph | Gen Fail |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | Baseline-BFS-llama3.1 | 0.2650 | 0.3000 | 0.3066 | 0.2958 | 6276.2 | 418.1 | 0 |
+| 2 | Baseline-BFS-gemma4 | 0.2650 | 0.2800 | 0.2850 | 0.2800 | 6276.2 | 418.1 | 46 |
+| 3 | Baseline-BFS-qwen2.5 | 0.1950 | 0.2900 | 0.3125 | 0.2858 | 6276.2 | 418.1 | 0 |
+| 4 | HRG-Proposed-llama3.1-triple | 0.1850 | 0.2100 | 0.2125 | 0.2050 | 51.0 | 4.5 | 0 |
+| 5 | HRG-Proposed-gemma4-json | 0.1600 | 0.2000 | 0.2275 | 0.2225 | 56.8 | 2.4 | 0 |
+| 6 | HRG-Proposed-gemma4-triple | 0.1600 | 0.1700 | 0.1825 | 0.1815 | 26.2 | 2.4 | 0 |
+| 7 | Spine-GrammarExpansion-gemma4-json | 0.1550 | 0.1900 | 0.2158 | 0.2117 | 52.4 | 2.3 | 0 |
+| 8 | Spine-GrammarExpansion-gemma4-triple | 0.1550 | 0.1650 | 0.1775 | 0.1765 | 24.1 | 2.3 | 0 |
+| 9 | HRG-Proposed-qwen2.5-json | 0.1550 | 0.2000 | 0.2200 | 0.2108 | 53.0 | 2.2 | 0 |
+| 10 | Spine-Correction-llama3.1-triple | 0.1450 | 0.1850 | 0.1910 | 0.1779 | 17.0 | 1.6 | 0 |
+| 11 | Spine-Only-llama3.1-triple | 0.1400 | 0.1800 | 0.1860 | 0.1729 | 16.2 | 1.5 | 0 |
+| 12 | HRG-Proposed-qwen2.5-triple | 0.1350 | 0.1450 | 0.1475 | 0.1450 | 25.0 | 2.2 | 0 |
+
+MLPQ 仍由 BFS 領先，表示目前 chain parser / schema mapping 對 multilingual KG 還不夠穩；HRG/Spine 有壓縮，但 retrieval recall 不足。
+
+#### KQAPro
+
+| Rank | Experiment | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx | Avg Subgraph | Gen Fail |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | Baseline-BFS-llama3.1 | 0.1000 | 0.1033 | 0.1061 | 0.1033 | 3730.7 | 254.8 | 0 |
+| 2 | Baseline-BFS-qwen2.5 | 0.0767 | 0.0967 | 0.1017 | 0.0949 | 3577.1 | 245.4 | 0 |
+| 3 | Baseline-BFS-gemma4 | 0.0567 | 0.0567 | 0.0567 | 0.0567 | 3372.1 | 230.9 | 15 |
+| 4 | Spine-Correction-gemma4-json | 0.0300 | 0.0333 | 0.0333 | 0.0313 | 3.7 | 0.2 | 0 |
+| 5 | HRG-Proposed-llama3.1-json | 0.0267 | 0.0267 | 0.0283 | 0.0280 | 47.6 | 1.8 | 0 |
+| 6 | Spine-Correction-gemma4-triple | 0.0267 | 0.0300 | 0.0300 | 0.0280 | 1.8 | 0.2 | 0 |
+| 7 | HRG-Proposed-gemma4-json | 0.0267 | 0.0300 | 0.0300 | 0.0280 | 12.2 | 0.5 | 0 |
+| 8 | HRG-Proposed-gemma4-triple | 0.0267 | 0.0300 | 0.0300 | 0.0280 | 6.2 | 0.5 | 0 |
+| 9 | Spine-Correction-llama3.1-json | 0.0233 | 0.0233 | 0.0250 | 0.0247 | 3.5 | 0.1 | 0 |
+| 10 | Spine-Correction-llama3.1-triple | 0.0233 | 0.0233 | 0.0250 | 0.0247 | 1.6 | 0.1 | 0 |
+| 11 | HRG-Proposed-llama3.1-triple | 0.0233 | 0.0233 | 0.0261 | 0.0263 | 25.3 | 1.8 | 0 |
+| 12 | Spine-Only-gemma4-json | 0.0233 | 0.0267 | 0.0267 | 0.0247 | 3.3 | 0.1 | 0 |
+
+KQAPro 整體分數低，BFS 仍最強；非 BFS 方法主要受 `no_valid_chain` 影響，表示單純 relation-chain parser 不足以覆蓋 KQAPro compositional reasoning。
+
+### 9.5 Spine vs HRG
+
+| Method | Avg EM | Avg Ans-F1 | Avg Ctx | Avg Subgraph | Avg RetRecall | Gen Fail |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| HRG-Proposed-json | 0.2204 | 0.2915 | 278.4 | 12.2 | 0.4665 | 4 |
+| Spine-Correction-json | 0.2161 | 0.2787 | 107.9 | 4.8 | 0.4335 | 2 |
+| HRG-Proposed-triple | 0.1833 | 0.2488 | 162.6 | 15.9 | 0.4666 | 1 |
+| Spine-Correction-triple | 0.1862 | 0.2460 | 63.0 | 6.5 | 0.4336 | 1 |
+| Spine-Only-json | 0.0785 | 0.1093 | 37.5 | 1.6 | 0.1632 | 3 |
+
+`HRG-Proposed-json` 是平均分數最好的壓縮方法；`Spine-Correction-json` 則是更 aggressive 的 token 壓縮版本。可以把 HRG 解讀成 recall-oriented compression，把 Spine-Correction 解讀成 precision-oriented compression。
+
+### 9.6 JSON vs Triple
+
+| Method | JSON Avg EM | JSON Avg Ctx | Triple Avg EM | Triple Avg Ctx |
+| --- | ---: | ---: | ---: | ---: |
+| HRG-Proposed | 0.2204 | 278.4 | 0.1833 | 162.6 |
+| Spine-Correction | 0.2161 | 107.9 | 0.1862 | 63.0 |
+| Spine-Only | 0.0785 | 37.5 | 0.0711 | 40.6 |
+| Spine-GrammarExpansion | 0.0753 | 64.2 | 0.0620 | 31.2 |
+| Spine-RandomExpansion | 0.0780 | 139.1 | 0.0683 | 98.1 |
+| Spine-FrequencyExpansion | 0.0769 | 140.4 | 0.0680 | 71.2 |
+
+整體趨勢是 JSON 通常比較準，triple 通常比較省 token。主實驗建議以 JSON 為主，triple 作為 serialization ablation。
+
+### 9.7 一句話結論
+
+1. `Baseline-BFS` 仍是最高平均 EM，但 context 最大、generation failure 也最多。
+
+2. `HRG-Proposed-json` 是目前最佳的整體壓縮/準確率 tradeoff。
+
+3. `Spine-Correction-json` 是最值得強調的高壓縮強 baseline，尤其在 MetaQA 上效果最好。
+
+4. `MLPQ` 和 `KQAPro` 的主要瓶頸不是 answer generation，而是 valid-chain discovery / schema adaptation。
 
 ---
 
-## 10. 一題從頭到尾的具體走法
-
-下面用「抽象但貼近實作」的方式寫一次完整題流程。
-
-### Step 1：輸入題目
-
-例子：
-
-```text
-Who directed the films that [Tom Hanks] starred in?
-```
-
-gold answer 假設是：
-
-```text
-["Robert Zemeckis"]
-```
-
-### Step 2：Parse 1
-
-LLM 可能輸出：
-
-```json
-[
-  {"entity": "Tom Hanks", "chain": ["starred_actors^-1", "directed_by"], "confidence": 0.82},
-  {"entity": "Tom Hanks", "chain": ["written_by^-1", "directed_by"], "confidence": 0.33}
-]
-```
-
-### Step 3：KB validity check
-
-系統逐條檢查：
-
-1. `["starred_actors^-1", "directed_by"]` 能不能走通
-2. `["written_by^-1", "directed_by"]` 能不能走通
-
-第一條若可走，第二條若中途 frontier 變空，就會被判 invalid。
-
-### Step 4：grammar matching
-
-對第一條 chain：
-
-```text
-["starred_actors^-1", "directed_by"]
-```
-
-先去方向：
-
-```text
-{"starred_actors", "directed_by"}
-```
-
-如果 grammar 裡某條規則 labels 包含這兩個 relation，就算 matched。
-
-### Step 5：candidate ranking
-
-排序時會綜合：
-
-1. LLM confidence
-2. chain 是否 valid
-3. grammar score
-4. 失敗進度
-5. 候選來源是原始 parse 還是 fallback
-
-### Step 6：取 spine
-
-從 `Tom Hanks` 開始，沿著：
-
-1. `starred_actors^-1`
-2. `directed_by`
-
-把嚴格主路徑邊抓出來。
-
-### Step 7：grammar expansion
-
-若 matched rule 還帶有：
-
-1. `written_by`
-2. `has_genre`
-
-那就從 spine 上節點往外補這些 relation 的邊。
-
-### Step 8：序列化 context
-
-可能變成：
-
-```json
-[
-  {"head":"Tom Hanks","relation":"starred_actors","tail":"Cast Away","count":1},
-  {"head":"Cast Away","relation":"directed_by","tail":"Robert Zemeckis","count":1},
-  {"head":"Cast Away","relation":"written_by","tail":"William Broyles Jr.","count":1}
-]
-```
-
-### Step 9：Answer generation
-
-LLM 只允許根據 context 回：
-
-```text
-Robert Zemeckis
-```
-
-### Step 10：算 metrics 並寫到 CSV / JSON
-
-這題最後會產生：
-
-1. per-question payload -> 寫進 `all_models_outputs_wide.csv`
-2. 各指標累加 -> 匯總進 `benchmark_results.json`
-
----
-
-## 10.5 委員最容易追問的設計問題與標準回答
-
-### Q1. 為什麼 grammar matching 不按順序對 hop
-
-因為目前這版系統把 grammar 用在「relation co-occurrence prior」，不是 exact derivation parser。
-
-所以它回答的是：
-
-1. 這條 chain 涉及的 relation 組合，在 KG 裡常不常一起出現
-2. 哪些 relation 值得用來擴張 spine 周邊 context
-
-不是回答：
-
-1. 這條 chain 是否被某條 HRG rule 完整逐步生成
-
-### Q2. 為什麼 correction 放在 fallback，不一開始就做
-
-因為一開始就 correction 會：
-
-1. 增加 token 成本
-2. 讓原始 parse 與修正版本混在一起
-3. 降低 ablation 可解釋性
-
-所以程式選擇：
-
-1. 先相信初始 parse
-2. 全失敗時才 correction
-
-### Q3. 為什麼 Proposed 不開 grammar_hint，但會開 grammar_rerank
-
-因為 benchmark 設計目前想把主要效果集中在：
-
-1. grammar expansion
-2. correction
-3. grammar rerank
-
-其中 `grammar_rerank` 已經打開，因為它現在被視為較輕量、較直接的「讓 grammar 前移」做法；但 `grammar_hint` 仍然關閉，原因是如果連 prompt hint 也一起打開，委員會很難分辨：
-
-1. 到底是 prompt hint 有效
-2. 還是 retrieval expansion 有效
-3. 還是 rerank 有效
-
-### Q4. 為什麼要有 random / frequency 這兩個 expansion
-
-因為它們是控制組：
-
-1. random expansion 測試「只要多加邊是不是就有幫助」
-2. frequency expansion 測試「只用全域高頻 relation 補邊是不是就夠」
-3. grammar expansion 才是測試「結構先驗選邊」是否比前兩者更合理
-
----
-
-## 11. 目前這套 grammar 使用方式的準確說法
-
-如果要寫在論文或口試，最精確的說法應該是：
-
-1. offline 階段，系統從 KG 的局部結構中抽取 HRG-style production rules
-2. online 階段，系統不是做完整 graph derivation
-3. 而是把 rule 中出現的 relation co-occurrence 當成 structural prior
-4. 對 predicted relation chain 做 subset-style grammar matching
-5. 再用 matched rule 的 relation labels 來做 rerank、fallback、subgraph expansion
-
-也就是說，目前這版比較接近：
-
-```text
-grammar-guided relation co-occurrence retrieval
-```
-
-而不是：
-
-```text
-full symbolic HRG parsing / exact derivation decoding
-```
-
----
-
-## 12. 總結：你看 artifact 時應該怎麼讀
-
-最實用的閱讀順序是：
-
-1. 先看 `results/benchmark_results.json`
-2. 先抓 `failure_counts`、`avg_ctx_tokens`、`avg_subgraph_size`
-3. 再看 `coverage` 與 `avg_retrieval_*`
-4. 若某模型失敗多，去 `all_models_outputs_wide.csv` 看它失敗在 `no_candidates`、`no_valid_chain` 還是 `retrieval_empty`
-5. 若要理解 grammar 有沒有幫上忙，再對照 `grammar/hrg_grammar.txt`
-
-最重要的三個判讀原則是：
-
-1. `coverage` 高，不代表答案一定好，只代表更多題目有 hit 到 grammar
-2. `compression_vs_bfs_*` 小，不代表方法比較好，只代表壓縮比較強
-3. 真正要看 trade-off，必須同時看 `em / hits_at_1 / mrr` 和 `avg_ctx_tokens / avg_subgraph_size`
-
-這三組 artifact 目前共同指出的現象是：
-
-1. baseline 通常答案分數較高，但 context 很大
-2. spine-only 壓縮最強，但很容易掉到 `no_valid_chain`
-3. HRG-proposed 在部分資料集能把 `ok` 題數拉回來一些
-4. 但目前整體瓶頸仍然主要在 chain parsing 與 chain validity，而不是最後答案生成
-
----
-
-## Appendix A. 口試用主表
-
-這一節的目的不是再解釋方法，而是提供可以直接放進簡報或口試回答的數字。
-
-### A.0 MetaQA 主表
-
-| Method | EM | Hits@1 | Hits@3 | Hits@5 | MRR | Ans-F1 | Avg Latency | Avg Ctx | Avg Subgraph | Coverage | Failure Counts |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| Baseline-BFS-llama3.1 | 0.4433 | 0.6800 | 0.7533 | 0.7567 | 0.7148 | 0.5917 | 2.95 | 4374.22 | 364.7467 | 0.0000 | `ok=300` |
-| Spine-Only-llama3.1-json | 0.5233 | 0.6600 | 0.7467 | 0.7467 | 0.7019 | 0.6702 | 4.14 | 1219.5926 | 54.8889 | 0.0000 | `ok=247, no_valid_chain=50, oom=3` |
-| Spine-Correction-llama3.1-json | 0.5667 | 0.7133 | 0.8133 | 0.8133 | 0.7619 | 0.7342 | 4.51 | 1259.4579 | 56.5690 | 0.0000 | `ok=269, no_valid_chain=28, oom=3` |
-| Spine-GrammarExpansion-llama3.1-json | 0.4033 | 0.5667 | 0.6567 | 0.6633 | 0.6119 | 0.5750 | 4.41 | 1612.1959 | 71.0653 | 0.7698 | `ok=224, no_valid_chain=67, oom=9` |
-| HRG-Proposed-llama3.1-json | 0.4633 | 0.6433 | 0.7567 | 0.7633 | 0.7002 | 0.6640 | 5.18 | 1984.3196 | 87.2405 | 0.8866 | `ok=258, no_valid_chain=33, oom=9` |
-
-### A.1 WikiMovies 主表
-
-| Method | EM | Hits@1 | Hits@3 | Hits@5 | MRR | Ans-F1 | Avg Latency | Avg Ctx | Avg Subgraph | Coverage | Failure Counts |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| Baseline-BFS-llama3.1 | 0.1800 | 0.4500 | 0.4500 | 0.4500 | 0.4514 | 0.3085 | 2.02 | 23.23 | 1.30 | 0.0000 | `ok=100` |
-| Spine-Only-llama3.1-json | 0.2800 | 0.4400 | 0.4400 | 0.4400 | 0.4400 | 0.3489 | 2.17 | 34.56 | 1.48 | 0.0000 | `ok=96, no_valid_chain=4` |
-| Spine-Correction-llama3.1-json | 0.2800 | 0.4400 | 0.4400 | 0.4400 | 0.4400 | 0.3489 | 2.21 | 34.56 | 1.48 | 0.0000 | `ok=96, no_valid_chain=4` |
-| Spine-GrammarExpansion-llama3.1-json | 0.2400 | 0.4200 | 0.4200 | 0.4200 | 0.4200 | 0.3129 | 3.51 | 217.77 | 8.78 | 0.9300 | `ok=93, no_valid_chain=7` |
-| Spine-RandomExpansion-llama3.1-json | 0.3000 | 0.4800 | 0.4800 | 0.4800 | 0.4800 | 0.3775 | 2.18 | 127.36 | 5.09 | 0.0000 | `ok=96, no_valid_chain=4` |
-| Spine-FrequencyExpansion-llama3.1-json | 0.2900 | 0.4800 | 0.4800 | 0.4800 | 0.4800 | 0.3704 | 2.19 | 129.27 | 5.09 | 0.0000 | `ok=96, no_valid_chain=4` |
-| HRG-Proposed-llama3.1-json | 0.2500 | 0.4300 | 0.4400 | 0.4400 | 0.4350 | 0.3296 | 3.63 | 234.28 | 9.44 | 0.9700 | `ok=97, no_valid_chain=3` |
-
-### A.2 MLPQ 主表
-
-| Method | EM | Hits@1 | Hits@3 | Hits@5 | MRR | Ans-F1 | Avg Latency | Avg Ctx | Avg Subgraph | Coverage | Failure Counts |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| Baseline-BFS-llama3.1 | 0.2750 | 0.2900 | 0.3250 | 0.3350 | 0.3100 | 0.3112 | 1.42 | 6215.66 | 418.14 | 0.0000 | `ok=200` |
-| Spine-Only-llama3.1-json | 0.0050 | 0.0650 | 0.1150 | 0.1250 | 0.0909 | 0.0720 | 3.80 | 40.89 | 1.80 | 0.0000 | `no_valid_chain=146, ok=53, no_candidates=1` |
-| Spine-Correction-llama3.1-json | 0.0100 | 0.0700 | 0.1200 | 0.1300 | 0.0959 | 0.0770 | 4.83 | 41.52 | 1.825 | 0.0000 | `no_valid_chain=145, ok=54, no_candidates=1` |
-| Spine-GrammarExpansion-llama3.1-json | 0.0150 | 0.0300 | 0.0400 | 0.0500 | 0.0375 | 0.0303 | 3.71 | 39.98 | 1.72 | 0.1400 | `no_valid_chain=154, ok=42, no_candidates=4` |
-| Spine-RandomExpansion-llama3.1-json | 0.0250 | 0.0700 | 0.1150 | 0.1150 | 0.0909 | 0.0804 | 3.82 | 175.06 | 7.28 | 0.0000 | `no_valid_chain=146, ok=53, no_candidates=1` |
-| Spine-FrequencyExpansion-llama3.1-json | 0.0100 | 0.0650 | 0.1150 | 0.1150 | 0.0875 | 0.0706 | 3.82 | 177.76 | 7.28 | 0.0000 | `no_valid_chain=146, ok=53, no_candidates=1` |
-| HRG-Proposed-llama3.1-json | 0.0200 | 0.0350 | 0.0450 | 0.0550 | 0.0425 | 0.0353 | 4.98 | 143.545 | 5.665 | 0.1650 | `no_valid_chain=149, ok=47, no_candidates=4` |
-
-### A.3 KQAPro 主表
-
-| Method | Backbone | EM | Hits@1 | Hits@3 | Hits@5 | MRR | Ans-F1 | Avg Latency | Avg Ctx | Avg Subgraph | Coverage | Failure Counts |
-|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| Baseline-BFS | llama3.1 | 0.1100 | 0.1167 | 0.1233 | 0.1267 | 0.1208 | 0.1172 | 1.31 | 3173.4733 | 219.8767 | 0.0000 | `ok=236, retrieval_empty=64` |
-| Spine-Only-json | llama3.1 | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 6.60 | 0.0733 | 0.0033 | 0.0000 | `no_valid_chain=243, no_candidates=56, ok=1` |
-| Spine-Correction-json | llama3.1 | 0.0233 | 0.0233 | 0.0233 | 0.0267 | 0.0242 | 0.0247 | 10.01 | 11.8967 | 0.4633 | 0.0000 | `no_valid_chain=227, no_candidates=56, ok=17` |
-| Spine-GrammarExpansion-json | llama3.1 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 6.56 | 0.14 | 0.0067 | 0.0033 | `no_valid_chain=254, no_candidates=45, ok=1` |
-| HRG-Proposed-json | llama3.1 | 0.0233 | 0.0233 | 0.0233 | 0.0267 | 0.0242 | 0.0247 | 9.44 | 13.4233 | 0.54 | 0.0533 | `no_valid_chain=233, ok=22, no_candidates=45` |
-| HRG-Proposed-json | qwen2.5 | 0.0433 | 0.0500 | 0.0500 | 0.0533 | 0.0508 | 0.0502 | 2.76 | 3.98 | 0.17 | 0.0367 | `no_valid_chain=261, no_candidates=15, ok=24` |
-| HRG-Proposed-triple | qwen2.5 | 0.0433 | 0.0467 | 0.0467 | 0.0467 | 0.0467 | 0.0456 | 0.01 | 1.84 | 0.17 | 0.0367 | `no_valid_chain=261, no_candidates=15, ok=24` |
-
----
-
-## Appendix B. Hop 級別數據
-
-### B.0 MetaQA `Baseline-BFS-llama3.1`
+## Appendix A. 最新全模型結果總表
+
+以下表格全部由目前 `artifacts/*/results/benchmark_results.json` 產生。欄位保留 `EM / Hits@1 / MRR / Ans-F1 / Avg Ctx / Coverage / Gen Fail`。
+
+### A.1 MetaQA
+
+| Experiment | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx | Coverage | Gen Fail |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Spine-Correction-llama3.1-json | 0.5433 | 0.7200 | 0.7653 | 0.7288 | 699.1 | 0.0000 | 1 |
+| Spine-Correction-gemma4-json | 0.5367 | 0.6133 | 0.6200 | 0.5802 | 183.5 | 0.0000 | 0 |
+| Spine-Correction-qwen2.5-json | 0.5267 | 0.6367 | 0.6450 | 0.5976 | 153.2 | 0.0000 | 0 |
+| Spine-Correction-gemma4-triple | 0.5000 | 0.5967 | 0.6083 | 0.5618 | 83.3 | 0.0000 | 0 |
+| Spine-Correction-qwen2.5-triple | 0.4900 | 0.6167 | 0.6300 | 0.5728 | 70.3 | 0.0000 | 0 |
+| HRG-Proposed-llama3.1-json | 0.4867 | 0.7000 | 0.7433 | 0.6885 | 1611.5 | 0.8889 | 3 |
+| Spine-Correction-llama3.1-triple | 0.4800 | 0.6900 | 0.7244 | 0.6661 | 474.9 | 0.0000 | 0 |
+| HRG-Proposed-gemma4-json | 0.4700 | 0.6100 | 0.6167 | 0.5532 | 632.1 | 0.7659 | 1 |
+| Baseline-BFS-llama3.1 | 0.4667 | 0.6833 | 0.7145 | 0.6016 | 4356.9 | 0.0000 | 0 |
+| HRG-Proposed-gemma4-triple | 0.4433 | 0.5867 | 0.5983 | 0.5340 | 307.6 | 0.7667 | 0 |
+| HRG-Proposed-qwen2.5-json | 0.4433 | 0.6233 | 0.6467 | 0.5789 | 717.4 | 0.8367 | 0 |
+| HRG-Proposed-llama3.1-triple | 0.4200 | 0.6967 | 0.7350 | 0.6565 | 1134.9 | 0.8896 | 1 |
+| Baseline-BFS-gemma4 | 0.4033 | 0.6000 | 0.6128 | 0.4968 | 4356.9 | 0.0000 | 0 |
+| Baseline-BFS-qwen2.5 | 0.4033 | 0.6333 | 0.6550 | 0.5350 | 4356.9 | 0.0000 | 0 |
+| HRG-Proposed-qwen2.5-triple | 0.3833 | 0.5833 | 0.6100 | 0.5333 | 324.3 | 0.8367 | 0 |
+| Spine-Only-llama3.1-json | 0.3067 | 0.4000 | 0.4383 | 0.4279 | 186.2 | 0.0000 | 2 |
+| Spine-RandomExpansion-llama3.1-json | 0.2967 | 0.4100 | 0.4423 | 0.4196 | 796.6 | 0.0000 | 2 |
+| Spine-FrequencyExpansion-llama3.1-json | 0.2967 | 0.4133 | 0.4444 | 0.4204 | 801.4 | 0.0000 | 2 |
+| Spine-Only-llama3.1-triple | 0.2567 | 0.3967 | 0.4150 | 0.3716 | 365.0 | 0.0000 | 0 |
+| Spine-GrammarExpansion-gemma4-json | 0.2333 | 0.2967 | 0.3017 | 0.2703 | 399.6 | 0.3880 | 1 |
+| Spine-RandomExpansion-llama3.1-triple | 0.2300 | 0.3700 | 0.4017 | 0.3588 | 692.7 | 0.0000 | 1 |
+| Spine-FrequencyExpansion-llama3.1-triple | 0.2300 | 0.3867 | 0.4083 | 0.3631 | 357.4 | 0.0000 | 2 |
+| Spine-Only-gemma4-json | 0.2267 | 0.2667 | 0.2717 | 0.2501 | 131.5 | 0.0000 | 0 |
+| Spine-RandomExpansion-gemma4-json | 0.2200 | 0.2700 | 0.2733 | 0.2502 | 448.5 | 0.0000 | 2 |
+| Spine-FrequencyExpansion-gemma4-json | 0.2167 | 0.2600 | 0.2667 | 0.2444 | 452.2 | 0.0000 | 2 |
+| Spine-Only-gemma4-triple | 0.2067 | 0.2633 | 0.2733 | 0.2492 | 59.7 | 0.0000 | 0 |
+| Spine-GrammarExpansion-gemma4-triple | 0.2000 | 0.2800 | 0.2883 | 0.2487 | 202.9 | 0.3900 | 0 |
+| Spine-RandomExpansion-gemma4-triple | 0.1833 | 0.2500 | 0.2550 | 0.2236 | 243.5 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-gemma4-triple | 0.1800 | 0.2500 | 0.2550 | 0.2239 | 247.7 | 0.0000 | 0 |
+| Spine-GrammarExpansion-llama3.1-json | 0.0567 | 0.0967 | 0.1133 | 0.1077 | 168.5 | 0.1572 | 1 |
+| Spine-GrammarExpansion-llama3.1-triple | 0.0400 | 0.0900 | 0.1033 | 0.0932 | 74.6 | 0.1572 | 1 |
+| Spine-GrammarExpansion-qwen2.5-json | 0.0067 | 0.0133 | 0.0133 | 0.0117 | 13.7 | 0.0433 | 0 |
+| Spine-GrammarExpansion-qwen2.5-triple | 0.0067 | 0.0100 | 0.0100 | 0.0095 | 6.2 | 0.0433 | 0 |
+| Spine-Only-qwen2.5-json | 0.0033 | 0.0067 | 0.0067 | 0.0062 | 3.9 | 0.0000 | 0 |
+| Spine-Only-qwen2.5-triple | 0.0033 | 0.0067 | 0.0067 | 0.0062 | 1.7 | 0.0000 | 0 |
+| Spine-RandomExpansion-qwen2.5-json | 0.0000 | 0.0033 | 0.0033 | 0.0029 | 11.3 | 0.0000 | 0 |
+| Spine-RandomExpansion-qwen2.5-triple | 0.0000 | 0.0033 | 0.0050 | 0.0041 | 4.7 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-qwen2.5-json | 0.0000 | 0.0033 | 0.0033 | 0.0029 | 11.5 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-qwen2.5-triple | 0.0000 | 0.0033 | 0.0050 | 0.0045 | 4.9 | 0.0000 | 0 |
+
+### A.2 WikiMovies
+
+| Experiment | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx | Coverage | Gen Fail |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| HRG-Proposed-llama3.1-json | 0.2900 | 0.4700 | 0.4750 | 0.3722 | 35.1 | 0.9700 | 0 |
+| Spine-Correction-gemma4-json | 0.2400 | 0.4200 | 0.4200 | 0.3112 | 24.2 | 0.0000 | 0 |
+| HRG-Proposed-gemma4-json | 0.2400 | 0.4100 | 0.4100 | 0.3091 | 23.7 | 0.9300 | 0 |
+| Spine-GrammarExpansion-gemma4-json | 0.2300 | 0.3900 | 0.3900 | 0.2941 | 22.8 | 0.8900 | 0 |
+| Spine-Correction-llama3.1-json | 0.2200 | 0.4200 | 0.4200 | 0.3082 | 44.1 | 0.0000 | 0 |
+| HRG-Proposed-qwen2.5-json | 0.2200 | 0.4000 | 0.4000 | 0.2918 | 25.5 | 0.9400 | 0 |
+| Spine-Correction-qwen2.5-json | 0.2100 | 0.4000 | 0.4000 | 0.2901 | 41.3 | 0.0000 | 0 |
+| Baseline-BFS-llama3.1 | 0.1800 | 0.4700 | 0.4714 | 0.3092 | 23.2 | 0.0000 | 0 |
+| Baseline-BFS-gemma4 | 0.1800 | 0.3100 | 0.3100 | 0.2375 | 23.2 | 0.0000 | 0 |
+| Spine-Correction-llama3.1-triple | 0.1700 | 0.4700 | 0.4742 | 0.2971 | 19.8 | 0.0000 | 0 |
+| HRG-Proposed-llama3.1-triple | 0.1600 | 0.4300 | 0.4318 | 0.2633 | 16.6 | 0.9700 | 0 |
+| Spine-Correction-gemma4-triple | 0.1600 | 0.2900 | 0.2950 | 0.2186 | 11.2 | 0.0000 | 0 |
+| HRG-Proposed-gemma4-triple | 0.1600 | 0.2800 | 0.2850 | 0.2165 | 11.0 | 0.9300 | 0 |
+| Baseline-BFS-qwen2.5 | 0.1600 | 0.4100 | 0.4100 | 0.2742 | 23.2 | 0.0000 | 0 |
+| Spine-GrammarExpansion-gemma4-triple | 0.1500 | 0.2600 | 0.2650 | 0.2015 | 10.6 | 0.8900 | 0 |
+| Spine-Only-gemma4-json | 0.1200 | 0.1900 | 0.1900 | 0.1501 | 10.8 | 0.0000 | 0 |
+| Spine-RandomExpansion-gemma4-json | 0.1200 | 0.1900 | 0.1900 | 0.1501 | 10.8 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-gemma4-json | 0.1200 | 0.1900 | 0.1900 | 0.1501 | 10.8 | 0.0000 | 0 |
+| Spine-Only-gemma4-triple | 0.0900 | 0.1300 | 0.1300 | 0.1093 | 5.0 | 0.0000 | 0 |
+| Spine-RandomExpansion-gemma4-triple | 0.0900 | 0.1300 | 0.1300 | 0.1093 | 5.0 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-gemma4-triple | 0.0900 | 0.1300 | 0.1300 | 0.1093 | 5.0 | 0.0000 | 0 |
+| Spine-Correction-qwen2.5-triple | 0.0900 | 0.3100 | 0.3100 | 0.2043 | 24.4 | 0.0000 | 0 |
+| HRG-Proposed-qwen2.5-triple | 0.0800 | 0.2700 | 0.2700 | 0.1707 | 12.1 | 0.9400 | 0 |
+| Spine-RandomExpansion-llama3.1-json | 0.0300 | 0.0500 | 0.0500 | 0.0417 | 6.2 | 0.0000 | 0 |
+| Spine-RandomExpansion-llama3.1-triple | 0.0300 | 0.0700 | 0.0700 | 0.0459 | 3.0 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-llama3.1-json | 0.0300 | 0.0500 | 0.0500 | 0.0417 | 6.2 | 0.0000 | 0 |
+| Spine-Only-llama3.1-json | 0.0200 | 0.0400 | 0.0400 | 0.0317 | 2.6 | 0.0000 | 0 |
+| Spine-Only-llama3.1-triple | 0.0200 | 0.0600 | 0.0600 | 0.0359 | 1.2 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-llama3.1-triple | 0.0200 | 0.0600 | 0.0600 | 0.0359 | 3.0 | 0.0000 | 0 |
+| Spine-GrammarExpansion-llama3.1-json | 0.0100 | 0.0100 | 0.0100 | 0.0100 | 0.2 | 0.0100 | 0 |
+| Spine-Only-qwen2.5-json | 0.0100 | 0.0100 | 0.0100 | 0.0100 | 0.2 | 0.0000 | 0 |
+| Spine-GrammarExpansion-qwen2.5-json | 0.0100 | 0.0100 | 0.0100 | 0.0100 | 0.2 | 0.0100 | 0 |
+| Spine-RandomExpansion-qwen2.5-json | 0.0100 | 0.0100 | 0.0100 | 0.0100 | 0.2 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-qwen2.5-json | 0.0100 | 0.0100 | 0.0100 | 0.0100 | 0.2 | 0.0000 | 0 |
+| Spine-GrammarExpansion-llama3.1-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.1 | 0.0100 | 0 |
+| Spine-Only-qwen2.5-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.1 | 0.0000 | 0 |
+| Spine-GrammarExpansion-qwen2.5-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.1 | 0.0100 | 0 |
+| Spine-RandomExpansion-qwen2.5-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.1 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-qwen2.5-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.1 | 0.0000 | 0 |
+
+### A.3 MLPQ
+
+| Experiment | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx | Coverage | Gen Fail |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Baseline-BFS-llama3.1 | 0.2650 | 0.3000 | 0.3066 | 0.2958 | 6276.2 | 0.0000 | 0 |
+| Baseline-BFS-gemma4 | 0.2650 | 0.2800 | 0.2850 | 0.2800 | 6276.2 | 0.0000 | 46 |
+| Baseline-BFS-qwen2.5 | 0.1950 | 0.2900 | 0.3125 | 0.2858 | 6276.2 | 0.0000 | 0 |
+| HRG-Proposed-llama3.1-triple | 0.1850 | 0.2100 | 0.2125 | 0.2050 | 51.0 | 0.3100 | 0 |
+| HRG-Proposed-gemma4-json | 0.1600 | 0.2000 | 0.2275 | 0.2225 | 56.8 | 0.0550 | 0 |
+| HRG-Proposed-gemma4-triple | 0.1600 | 0.1700 | 0.1825 | 0.1815 | 26.2 | 0.0550 | 0 |
+| Spine-GrammarExpansion-gemma4-json | 0.1550 | 0.1900 | 0.2158 | 0.2117 | 52.4 | 0.0500 | 0 |
+| Spine-GrammarExpansion-gemma4-triple | 0.1550 | 0.1650 | 0.1775 | 0.1765 | 24.1 | 0.0500 | 0 |
+| HRG-Proposed-qwen2.5-json | 0.1550 | 0.2000 | 0.2200 | 0.2108 | 53.0 | 0.2150 | 0 |
+| Spine-Correction-llama3.1-triple | 0.1450 | 0.1850 | 0.1910 | 0.1779 | 17.0 | 0.0000 | 0 |
+| Spine-Only-llama3.1-triple | 0.1400 | 0.1800 | 0.1860 | 0.1729 | 16.2 | 0.0000 | 0 |
+| HRG-Proposed-qwen2.5-triple | 0.1350 | 0.1450 | 0.1475 | 0.1450 | 25.0 | 0.2150 | 0 |
+| Spine-RandomExpansion-llama3.1-triple | 0.1300 | 0.1700 | 0.1860 | 0.1746 | 73.5 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-llama3.1-triple | 0.1250 | 0.1700 | 0.1875 | 0.1765 | 76.4 | 0.0000 | 0 |
+| Spine-GrammarExpansion-qwen2.5-json | 0.1250 | 0.1600 | 0.1775 | 0.1709 | 36.6 | 0.1800 | 0 |
+| HRG-Proposed-llama3.1-json | 0.1100 | 0.1700 | 0.2041 | 0.1925 | 108.0 | 0.3100 | 0 |
+| Spine-FrequencyExpansion-qwen2.5-json | 0.1100 | 0.1400 | 0.1567 | 0.1517 | 86.1 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-qwen2.5-triple | 0.1100 | 0.1250 | 0.1275 | 0.1250 | 41.3 | 0.0000 | 0 |
+| Spine-RandomExpansion-qwen2.5-triple | 0.1050 | 0.1150 | 0.1175 | 0.1167 | 39.8 | 0.0000 | 0 |
+| Spine-GrammarExpansion-qwen2.5-triple | 0.1000 | 0.1100 | 0.1100 | 0.1067 | 17.6 | 0.1800 | 0 |
+| Spine-RandomExpansion-qwen2.5-json | 0.1000 | 0.1200 | 0.1375 | 0.1358 | 84.5 | 0.0000 | 0 |
+| Spine-Only-qwen2.5-json | 0.0950 | 0.1350 | 0.1475 | 0.1375 | 21.5 | 0.0000 | 0 |
+| Spine-Correction-qwen2.5-json | 0.0950 | 0.1550 | 0.1750 | 0.1609 | 29.8 | 0.0000 | 0 |
+| Spine-Correction-llama3.1-json | 0.0900 | 0.1550 | 0.1971 | 0.1840 | 36.6 | 0.0000 | 0 |
+| Spine-Only-llama3.1-json | 0.0850 | 0.1500 | 0.1921 | 0.1790 | 35.1 | 0.0000 | 0 |
+| Spine-Correction-qwen2.5-triple | 0.0850 | 0.1000 | 0.1075 | 0.1050 | 14.3 | 0.0000 | 0 |
+| Spine-RandomExpansion-llama3.1-json | 0.0750 | 0.1350 | 0.1641 | 0.1462 | 157.3 | 0.0000 | 0 |
+| Spine-Only-qwen2.5-triple | 0.0750 | 0.0850 | 0.0875 | 0.0850 | 10.5 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-llama3.1-json | 0.0700 | 0.1350 | 0.1658 | 0.1471 | 160.3 | 0.0000 | 0 |
+| Spine-GrammarExpansion-llama3.1-triple | 0.0650 | 0.0800 | 0.0800 | 0.0750 | 27.6 | 0.2100 | 0 |
+| Spine-Correction-gemma4-json | 0.0550 | 0.0850 | 0.1066 | 0.1042 | 58.6 | 0.0000 | 1 |
+| Spine-RandomExpansion-gemma4-json | 0.0550 | 0.0550 | 0.0575 | 0.0583 | 145.1 | 0.0000 | 2 |
+| Spine-GrammarExpansion-llama3.1-json | 0.0500 | 0.0800 | 0.0883 | 0.0791 | 58.7 | 0.2100 | 0 |
+| Spine-Only-gemma4-json | 0.0450 | 0.0750 | 0.0925 | 0.0883 | 54.9 | 0.0000 | 1 |
+| Spine-Correction-gemma4-triple | 0.0450 | 0.0550 | 0.0708 | 0.0715 | 28.0 | 0.0000 | 1 |
+| Spine-FrequencyExpansion-gemma4-json | 0.0400 | 0.0400 | 0.0400 | 0.0400 | 148.1 | 0.0000 | 2 |
+| Spine-Only-gemma4-triple | 0.0350 | 0.0450 | 0.0558 | 0.0549 | 26.3 | 0.0000 | 1 |
+| Spine-FrequencyExpansion-gemma4-triple | 0.0350 | 0.0350 | 0.0350 | 0.0350 | 114.8 | 0.0000 | 1 |
+| Spine-RandomExpansion-gemma4-triple | 0.0250 | 0.0250 | 0.0275 | 0.0284 | 111.7 | 0.0000 | 1 |
+
+### A.4 KQAPro
+
+| Experiment | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx | Coverage | Gen Fail |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Baseline-BFS-llama3.1 | 0.1000 | 0.1033 | 0.1061 | 0.1033 | 3730.7 | 0.0000 | 0 |
+| Baseline-BFS-qwen2.5 | 0.0767 | 0.0967 | 0.1017 | 0.0949 | 3577.1 | 0.0000 | 0 |
+| Baseline-BFS-gemma4 | 0.0567 | 0.0567 | 0.0567 | 0.0567 | 3372.1 | 0.0000 | 15 |
+| Spine-Correction-gemma4-json | 0.0300 | 0.0333 | 0.0333 | 0.0313 | 3.7 | 0.0000 | 0 |
+| HRG-Proposed-llama3.1-json | 0.0267 | 0.0267 | 0.0283 | 0.0280 | 47.6 | 0.0433 | 0 |
+| Spine-Correction-gemma4-triple | 0.0267 | 0.0300 | 0.0300 | 0.0280 | 1.8 | 0.0000 | 0 |
+| HRG-Proposed-gemma4-json | 0.0267 | 0.0300 | 0.0300 | 0.0280 | 12.2 | 0.0167 | 0 |
+| HRG-Proposed-gemma4-triple | 0.0267 | 0.0300 | 0.0300 | 0.0280 | 6.2 | 0.0167 | 0 |
+| Spine-Correction-llama3.1-json | 0.0233 | 0.0233 | 0.0250 | 0.0247 | 3.5 | 0.0000 | 0 |
+| Spine-Correction-llama3.1-triple | 0.0233 | 0.0233 | 0.0250 | 0.0247 | 1.6 | 0.0000 | 0 |
+| HRG-Proposed-llama3.1-triple | 0.0233 | 0.0233 | 0.0261 | 0.0263 | 25.3 | 0.0433 | 0 |
+| Spine-Only-gemma4-json | 0.0233 | 0.0267 | 0.0267 | 0.0247 | 3.3 | 0.0000 | 0 |
+| Spine-RandomExpansion-gemma4-json | 0.0233 | 0.0267 | 0.0267 | 0.0247 | 7.6 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-gemma4-json | 0.0233 | 0.0267 | 0.0267 | 0.0247 | 7.5 | 0.0000 | 0 |
+| Spine-Correction-qwen2.5-json | 0.0233 | 0.0233 | 0.0233 | 0.0233 | 16.8 | 0.0000 | 0 |
+| HRG-Proposed-qwen2.5-triple | 0.0233 | 0.0267 | 0.0267 | 0.0256 | 10.5 | 0.0367 | 0 |
+| Spine-Only-gemma4-triple | 0.0200 | 0.0233 | 0.0233 | 0.0213 | 1.5 | 0.0000 | 0 |
+| Spine-RandomExpansion-gemma4-triple | 0.0200 | 0.0233 | 0.0233 | 0.0213 | 3.4 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-gemma4-triple | 0.0200 | 0.0233 | 0.0233 | 0.0213 | 3.3 | 0.0000 | 0 |
+| Spine-Correction-qwen2.5-triple | 0.0200 | 0.0267 | 0.0267 | 0.0244 | 10.0 | 0.0000 | 0 |
+| Spine-GrammarExpansion-gemma4-json | 0.0167 | 0.0200 | 0.0200 | 0.0180 | 2.9 | 0.0100 | 0 |
+| Spine-GrammarExpansion-gemma4-triple | 0.0167 | 0.0200 | 0.0200 | 0.0180 | 1.3 | 0.0100 | 0 |
+| HRG-Proposed-qwen2.5-json | 0.0167 | 0.0233 | 0.0233 | 0.0222 | 17.9 | 0.0367 | 0 |
+| Spine-GrammarExpansion-llama3.1-json | 0.0067 | 0.0067 | 0.0067 | 0.0067 | 0.3 | 0.0033 | 0 |
+| Spine-GrammarExpansion-llama3.1-triple | 0.0067 | 0.0067 | 0.0067 | 0.0067 | 0.1 | 0.0033 | 0 |
+| Spine-Only-llama3.1-json | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.2 | 0.0000 | 0 |
+| Spine-Only-llama3.1-triple | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.1 | 0.0000 | 0 |
+| Spine-RandomExpansion-llama3.1-json | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.6 | 0.0000 | 0 |
+| Spine-RandomExpansion-llama3.1-triple | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.3 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-llama3.1-json | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.6 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-llama3.1-triple | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.3 | 0.0000 | 0 |
+| Spine-Only-qwen2.5-json | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.2 | 0.0000 | 0 |
+| Spine-Only-qwen2.5-triple | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.1 | 0.0000 | 0 |
+| Spine-GrammarExpansion-qwen2.5-json | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 14.1 | 0.0067 | 0 |
+| Spine-GrammarExpansion-qwen2.5-triple | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 8.8 | 0.0067 | 0 |
+| Spine-RandomExpansion-qwen2.5-json | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.2 | 0.0000 | 0 |
+| Spine-RandomExpansion-qwen2.5-triple | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.1 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-qwen2.5-json | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.2 | 0.0000 | 0 |
+| Spine-FrequencyExpansion-qwen2.5-triple | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.1 | 0.0000 | 0 |
+
+## Appendix B. 代表性 Hop-Level 結果
+
+### Baseline-BFS-llama3.1@metaqa-vanilla-test
 
 | Hop | EM | Hits@1 | MRR | Ans-F1 | Avg Latency |
-|---|---:|---:|---:|---:|---:|
-| 1-hop | 0.72 | 0.88 | 0.8900 | 0.8352 | 1.57 |
-| 2-hop | 0.54 | 0.68 | 0.7158 | 0.6967 | 1.06 |
-| 3-hop | 0.07 | 0.48 | 0.5385 | 0.2431 | 6.22 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1-hop | 0.7900 | 0.9000 | 0.9050 | 0.8691 | 1.0500 |
+| 2-hop | 0.5500 | 0.7000 | 0.7238 | 0.6925 | 1.2500 |
+| 3-hop | 0.0600 | 0.4500 | 0.5148 | 0.2431 | 6.4500 |
 
-### B.0.1 MetaQA `Spine-Correction-llama3.1-json`
-
-| Hop | EM | Hits@1 | MRR | Ans-F1 | Avg Latency |
-|---|---:|---:|---:|---:|---:|
-| 1-hop | 0.92 | 0.96 | 0.9650 | 0.9570 | 2.34 |
-| 2-hop | 0.61 | 0.69 | 0.7750 | 0.8125 | 4.55 |
-| 3-hop | 0.17 | 0.49 | 0.5458 | 0.4330 | 6.65 |
-
-### B.1 MLPQ `Baseline-BFS-llama3.1`
+### Spine-Correction-llama3.1-json@metaqa-vanilla-test
 
 | Hop | EM | Hits@1 | MRR | Ans-F1 | Avg Latency |
-|---|---:|---:|---:|---:|---:|
-| 2-hop | 0.29 | 0.32 | 0.3475 | 0.3457 | 0.21 |
-| 3-hop | 0.26 | 0.26 | 0.2725 | 0.2767 | 2.63 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1-hop | 0.8700 | 0.9200 | 0.9300 | 0.9305 | 2.4800 |
+| 2-hop | 0.5400 | 0.6200 | 0.6900 | 0.7095 | 3.9700 |
+| 3-hop | 0.2200 | 0.6200 | 0.6758 | 0.5463 | 5.6400 |
 
-### B.2 MLPQ `HRG-Proposed-llama3.1-json`
-
-| Hop | EM | Hits@1 | MRR | Ans-F1 | Avg Latency |
-|---|---:|---:|---:|---:|---:|
-| 2-hop | 0.00 | 0.00 | 0.0000 | 0.0000 | 4.85 |
-| 3-hop | 0.04 | 0.07 | 0.0850 | 0.0706 | 5.11 |
-
-### B.3 KQAPro `Baseline-BFS-llama3.1`
+### HRG-Proposed-llama3.1-json@wikimovies-wiki_entities-test
 
 | Hop | EM | Hits@1 | MRR | Ans-F1 | Avg Latency |
-|---|---:|---:|---:|---:|---:|
-| 1-hop | 0.07 | 0.07 | 0.0750 | 0.0709 | 0.55 |
-| 2-hop | 0.09 | 0.10 | 0.1075 | 0.1057 | 1.30 |
-| 3-hop | 0.17 | 0.18 | 0.1800 | 0.1750 | 2.09 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1-hop | 0.2900 | 0.4700 | 0.4750 | 0.3722 | 5.2200 |
 
-### B.4 KQAPro `HRG-Proposed-qwen2.5-json`
+### Baseline-BFS-llama3.1@mlpq-en-zh-en-ills
 
 | Hop | EM | Hits@1 | MRR | Ans-F1 | Avg Latency |
-|---|---:|---:|---:|---:|---:|
-| 1-hop | 0.08 | 0.09 | 0.0900 | 0.0814 | 0.01 |
-| 2-hop | 0.03 | 0.03 | 0.0300 | 0.0300 | 0.01 |
-| 3-hop | 0.02 | 0.03 | 0.0325 | 0.0391 | 8.24 |
-
----
-
-## Appendix C. 序列化格式比較
-
-### C.0 MetaQA `llama3.1`
-
-| Method | JSON Ctx | Triple Ctx | JSON Parse2 | Triple Parse2 |
-|---|---:|---:|---:|---:|
-| Spine-Only | 1219.5926 | 763.1678 | 1425.0034 | 991.1275 |
-| Spine-Correction | 1259.4579 | 781.9430 | 1482.2660 | 1034.4832 |
-| HRG-Proposed | 1984.3196 | 2394.2500 | 2218.3162 | 2936.6689 |
-
-### C.1 WikiMovies `llama3.1`
-
-| Method | JSON Ctx | Triple Ctx | JSON Parse2 | Triple Parse2 |
-|---|---:|---:|---:|---:|
-| Spine-Only | 34.56 | 15.89 | 236.59 | 405.53 |
-| Spine-Correction | 34.56 | 15.89 | 236.59 | 405.53 |
-| HRG-Proposed | 234.28 | 116.02 | 442.97 | 781.14 |
-
-### C.2 MLPQ `llama3.1`
-
-| Method | JSON Ctx | Triple Ctx | JSON Parse2 | Triple Parse2 |
-|---|---:|---:|---:|---:|
-| Spine-Only | 40.89 | 18.34 | 109.94 | 83.94 |
-| Spine-Correction | 41.52 | 18.655 | 111.72 | 85.54 |
-| HRG-Proposed | 143.545 | 72.66 | 215.75 | 170.13 |
-
-### C.3 KQAPro
-
-| Method | Backbone | JSON Ctx | Triple Ctx | JSON Parse2 | Triple Parse2 |
-|---|---|---:|---:|---:|---:|
-| Spine-Only | llama3.1 | 0.0733 | 0.03 | 0.77 | 0.7367 |
-| Spine-Correction | llama3.1 | 11.8967 | 6.0967 | 24.67 | 20.7167 |
-| HRG-Proposed | qwen2.5 | 3.98 | 1.84 | 21.8033 | 19.57 |
-
----
-
-## Appendix D. 口試時可直接念的數字結論
-
-1. 在 MetaQA 上，`Spine-Correction-llama3.1-json` 的 `EM=0.5667`、`Hits@1=0.7133`、`MRR=0.7619`，高於 baseline 的 `0.4433 / 0.68 / 0.7148`；同時 `avg_ctx_tokens=1259.46`，只有 baseline `4374.22` 的約 `28.8%`。
-2. 在 WikiMovies 上，parser 與 normalized KB 修正後，`Spine-RandomExpansion-llama3.1-json` 的 `EM=0.30` 已高於 baseline `0.18`；表示這組資料現在已可用，但最佳 gain 不是來自 grammar。
-3. 在 MLPQ 上，baseline `EM=0.275`、`avg_ctx_tokens=6215.66`；`HRG-Proposed-llama3.1-json` 只有 `EM=0.02`、`avg_ctx_tokens=143.545`，說明方法保住了極強壓縮，但答案品質仍大幅落後 baseline。
-4. 在 KQAPro 上，最佳非 baseline 是 `HRG-Proposed-qwen2.5-triple`：`EM=0.0433`、`Hits@1=0.0467`、`avg_ctx_tokens=1.84`；相比 baseline `llama3.1` 的 `EM=0.11`、`avg_ctx_tokens=3173.47`，它展示的是極端壓縮下的非零能力，而不是接近 baseline。
-5. 這次更新後，`hits_at_1 / hits_at_3 / hits_at_5 / mrr` 已經成為主結果指標，因此目前的 artifact 更像 ranking-style answer evaluation，而不再是先前那組以 `answer_recall` 為主的報表。
-
----
-
-## Appendix E. 現有 Dump 可補算結果
-
-這一節不是根據 `benchmark_results.json`，而是直接根據目前磁碟上真的存在的 `artifacts/*/dumps/per_model/q_*.pkl` 補算。
-
-### E.1 先講限制
-
-截至目前為止，現有 dump 保留狀況非常稀疏：
-
-1. `artifacts/wikimovies-wiki_entities-test/dumps/per_model/` 只找到 1 個 `q_*.pkl`
-2. `artifacts/mlpq-en-zh-en-ills/dumps/per_model/` 目前沒有找到 `q_*.pkl`
-3. `artifacts/kqapro-validation/dumps/per_model/` 目前只找到 3 個 `Baseline-BFS-llama3.1` 的 `q_*.pkl`
-
-所以這一節的數字只能視為：
-
-1. dump schema 驗證
-2. partial recomputation example
-3. 不能當成全量 benchmark 結論
-
-### E.2 Partial Recompute: `kqapro-validation` `Baseline-BFS-llama3.1`（3 題）
-
-根據現有 3 個 dump 補算得到：
-
-| Metric | Value |
-|---|---:|
-| Dump Count | 3 |
-| Avg Subgraph Size | 5.3333 |
-| Avg Retrieval Recall | 0.3333 |
-| Avg Retrieval Precision | 0.0833 |
-| Avg Retrieval F1 | 0.1333 |
-| Avg Context Tokens | 74.3333 |
-| Avg Parse1 Tokens | 89.0 |
-| Avg Correction Tokens | 0.0 |
-| Avg Parse2 Tokens | 221.3333 |
-
-這 3 題的具體情況是：
-
-1. `q_0000.pkl`
-   - `answer = Mrs. Miniver`
-   - `subgraph_size = 10`
-   - `retrieval_recall = 0.0`
-   - `context_tokens = 143`
-2. `q_0001.pkl`
-   - `answer = 3`
-   - `subgraph_size = 6`
-   - `retrieval_recall = 1.0`
-   - `context_tokens = 80`
-3. `q_0002.pkl`
-   - `answer = I couldn't find any information in the Knowledge Graph matching your query.`
-   - `subgraph_size = 0`
-   - `retrieval_recall = 0.0`
-   - `context_tokens = 0`
-
-這個 partial result 至少證明：
-
-1. baseline dump 已經足夠重建 token / retrieval / subgraph 類指標
-2. 題級 context token 與 subgraph size 可以直接補算
-3. 若 dump 完整保留，全量重算 `avg_ctx_tokens / avg_subgraph_size / avg_retrieval_*` 沒有技術障礙
-
-### E.3 Partial Recompute: `wikimovies-wiki_entities-test` `Spine-RandomExpansion-qwen3.5-triple`（1 題）
-
-目前只找到 1 題：
-
-| Metric | Value |
-|---|---:|
-| Dump Count | 1 |
-| Avg Subgraph Size | 0.0 |
-| Avg Retrieval Recall | 0.0 |
-| Avg Retrieval Precision | 0.0 |
-| Avg Retrieval F1 | 0.0 |
-| Avg Context Tokens | 0.0 |
-| Avg Parse1 Tokens | 766.0 |
-| Avg Correction Tokens | 0.0 |
-| Avg Parse2 Tokens | 0.0 |
-
-這題的 candidate 內容也能直接從 dump 看到：
-
-1. `source = llm`
-2. `entity = Heather Sears`
-3. `chain = ['starred_actors^-1']`
-4. `grammar_hit = 0`
-5. `grammar_same_arity_hit = 0`
-6. `grammar_matched_count = 0`
-7. `grammar_score = 0.0`
-8. `kb_result = {'valid': False, 'step_sizes': [], 'final_size': 0, 'failed_hop': 0}`
-
-這代表目前 HRG/spine 類 dump 雖然保留數量不足，但單一 dump 已經足夠支持：
-
-1. candidate-level validity analysis
-2. grammar hit / same-arity hit / grammar score 分析
-3. chain source 分析
-4. parse token 成本分析
-
-### E.4 用現有 dump，現在就能補算哪些指標
-
-如果下次把 dump 保留完整，基於目前 schema 已可補算：
-
-1. `avg_subgraph_size`
-2. `avg_ctx_tokens`
-3. `avg_parse1_tokens`
-4. `avg_correction_tokens`
-5. `avg_parse2_tokens`
-6. `avg_retrieval_recall / precision / f1`
-7. `coverage`
-8. `candidate_validity_rate`
-9. `same_arity_hit_rate`
-10. `grammar_score` 分布
-11. `correction_salvage_rate`
-12. `per-question compression diagnostics`
-
-### E.5 用現有 dump，還不能完整補算哪些主流 benchmark 指標
-
-光靠現在這批 sparse dump，仍然不能完整補算：
-
-1. 全 corpus document-level `Recall@k`
-2. 全 corpus document-level `nDCG`
-3. 嚴格版 claim-level `faithfulness`
-4. 嚴格版 `hallucination`
-5. 跨資料集一致的 gold-evidence `evidence correctness`
-6. 跨資料集一致的 `citation correctness`
-
-原因不是完全沒有 dump，而是：
-
-1. 目前保留下來的 dump 題數不足
-2. 舊 schema 沒有把 ranked retrieval list、final context、timing、selected candidate、references 等欄位統一存好
-
----
-
-## Appendix F. Dump Schema 已補強項目
-
-為了讓下一次實驗可以補算更多 benchmark 指標，程式已經補強 dump schema。
-
-### F.1 HRG / Spine 類 dump 現在會多存
-
-在 [knowledgegraph_agent.py](/home/zihui/projects/masterPaperRemake/portable_runner/LLM_inference_benchmark/knowledgegraph_agent.py) 中，dump 現在會額外保留：
-
-1. `failure_stage`
-2. `grammar_hit`
-3. `serialization_format`
-4. `references`
-5. `spine_edges`
-6. `expanded_edges`
-7. `selected_candidate`
-8. `final_context`
-9. `timing`
-
-這些欄位的目的分別是：
-
-1. `failure_stage`: 重建 `failure_counts` 與題級失敗型態
-2. `spine_edges` / `expanded_edges`: 分開分析 retrieval 主幹與擴張貢獻
-3. `selected_candidate`: 重建 candidate ranking 與最終選擇邏輯
-4. `final_context`: 之後可做 context-level faithfulness / claim-support 檢查
-5. `references`: 不用再額外回頭對 dataset 檔做對齊
-6. `timing`: 題級 latency 分析
-
-### F.2 Baseline dump 現在也會多存
-
-在 [baseline.py](/home/zihui/projects/masterPaperRemake/portable_runner/LLM_inference_benchmark/baseline.py) 中，現在也補了：
-
-1. `failure_stage`
-2. `references`
-3. `selected_depth`
-4. `serialization_format`
-5. `final_context`
-6. `timing`
-
-這樣 baseline 與 spine/HRG 路徑的 dump 結構就比較一致。
-
-### F.3 下一次重跑後，最值得補算的新增指標
-
-基於補強後 schema，下一輪完整實驗後最適合新增：
-
-1. `correction_salvage_rate`
-2. `grammar_hit_rate_per_hop`
-3. `spine_vs_expansion_edge_ratio`
-4. `avg_expanded_edges`
-5. `selected_candidate_source_distribution`
-6. `same_arity_hit_rate`
-7. `per-question final_context_length`
-8. `failure_stage -> token_cost` 對照
-
-這一批指標最貼近你目前方法的研究問題，而且不需要再大改主程式。
-
----
-
-## Appendix G. Dump 補算腳本
-
-現在 repo 已新增：
-
-[`recompute_from_dumps.py`](/home/zihui/projects/masterPaperRemake/portable_runner/recompute_from_dumps.py)
-
-用途是直接從：
-
-```text
-artifacts/<run_tag>/dumps/per_model/**/q_*.pkl
-```
-
-重建 dump-based summary。
-
-### G.1 使用方式
-
-```bash
-python3 recompute_from_dumps.py --run-tag kqapro-validation
-python3 recompute_from_dumps.py --run-tag wikimovies-wiki_entities-test
-python3 recompute_from_dumps.py --run-tag mlpq-en-zh-en-ills
-```
-
-預設輸出到：
-
-```text
-artifacts/<run_tag>/results/dump_recomputed_summary.json
-artifacts/<run_tag>/results/dump_recomputed_rows.csv
-```
-
-### G.2 腳本會補算什麼
-
-目前腳本會自動補算：
-
-1. `dump_count`
-2. `avg_subgraph_size`
-3. `avg_retrieval_recall`
-4. `avg_retrieval_precision`
-5. `avg_retrieval_f1`
-6. `avg_ctx_tokens`
-7. `avg_parse1_tokens`
-8. `avg_correction_tokens`
-9. `avg_parse2_tokens`
-10. `avg_parse_latency`
-11. `avg_retrieval_latency`
-12. `avg_generation_latency`
-13. `avg_num_candidates`
-14. `avg_num_matched_rules`
-15. `coverage_from_dump`
-16. `candidate_validity_rate`
-17. `candidate_grammar_hit_rate`
-18. `candidate_same_arity_hit_rate`
-19. `correction_salvage_rate`
-20. `failure_counts_from_dump`
-21. `candidate_source_counts`
-22. `selected_candidate_source_counts`
-
-如果 dump 裡有 `references`，腳本還會額外補：
-
-1. `avg_answer_recall`
-2. `avg_em`
-3. `avg_contains_hit`
-4. `avg_hit_at_1_any`
-5. `avg_answer_set_precision`
-6. `avg_answer_set_recall`
-7. `avg_answer_set_f1`
-
-### G.3 目前已驗證成功的例子
-
-我已經實際執行：
-
-```bash
-python3 recompute_from_dumps.py --run-tag kqapro-validation
-```
-
-並成功生成：
-
-1. [dump_recomputed_summary.json](/home/zihui/projects/masterPaperRemake/portable_runner/artifacts/kqapro-validation/results/dump_recomputed_summary.json)
-2. [dump_recomputed_rows.csv](/home/zihui/projects/masterPaperRemake/portable_runner/artifacts/kqapro-validation/results/dump_recomputed_rows.csv)
-
-其中目前因為是舊 dump，會看到：
-
-1. `failure_stage = unknown`
-2. `avg_parse_latency = 0.0`
-3. `avg_retrieval_latency = 0.0`
-4. `avg_generation_latency = 0.0`
-
-這不是腳本錯，而是舊 dump 當初根本沒有把這些欄位存進去。
-
-### G.4 新 dump 與舊 dump 的差別一定要講清楚
-
-目前要分成兩代 dump：
-
-1. 舊 dump
-   - 沒有 `failure_stage`
-   - 沒有 `timing`
-   - 大多沒有 `references`
-   - 有些也沒有 `selected_candidate`
-2. 新 dump
-   - 有 `failure_stage`
-   - 有 `timing`
-   - 有 `references`
-   - 有 `spine_edges / expanded_edges / final_context / selected_candidate`
-
-所以：
-
-1. 舊 dump 只能補算一部分 summary
-2. 新 dump 才能真正支持完整 dump-based benchmark augmentation
-
----
-
-## Appendix H. 全模型結果總表
-
-這一節補上四個資料集所有 backbone 的方法結果，避免主文只看 `llama3.1` 時遺漏其他模型。
-
-為了控制表格長度，這裡統一只保留：
-
-1. `EM`
-2. `Hits@1`
-3. `MRR`
-4. `Ans-F1`
-5. `Avg Ctx`
-6. `Coverage`
-
-若要看完整 `Hits@3 / Hits@5 / Avg Subgraph / Failure Counts`，仍以各 dataset 的 `results/benchmark_results.json` 為準。
-
-### H.1 MetaQA
-
-| Method | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx | Coverage |
-|---|---:|---:|---:|---:|---:|---:|
-| Baseline-BFS-llama3.1 | 0.4433 | 0.6800 | 0.7148 | 0.5917 | 4374.22 | 0.0000 |
-| Baseline-BFS-llama3.2 | 0.0767 | 0.2533 | 0.3019 | 0.2291 | 4374.22 | 0.0000 |
-| Baseline-BFS-qwen2.5 | 0.4033 | 0.6400 | 0.6590 | 0.5410 | 4376.19 | 0.0000 |
-| Spine-Only-llama3.1-json | 0.5233 | 0.6600 | 0.7019 | 0.6702 | 1219.5926 | 0.0000 |
-| Spine-Only-llama3.1-triple | 0.4400 | 0.6533 | 0.6836 | 0.6052 | 763.1678 | 0.0000 |
-| Spine-Only-llama3.2-json | 0.0033 | 0.0133 | 0.0156 | 0.0101 | 2894.5754 | 0.0000 |
-| Spine-Only-llama3.2-triple | 0.0033 | 0.0067 | 0.0090 | 0.0051 | 1907.9126 | 0.0000 |
-| Spine-Only-qwen2.5-json | 0.4567 | 0.5567 | 0.5708 | 0.5339 | 257.50 | 0.0000 |
-| Spine-Only-qwen2.5-triple | 0.3967 | 0.5467 | 0.5683 | 0.5167 | 113.9867 | 0.0000 |
-| Spine-Correction-llama3.1-json | 0.5667 | 0.7133 | 0.7619 | 0.7342 | 1259.4579 | 0.0000 |
-| Spine-Correction-llama3.1-triple | 0.4933 | 0.7100 | 0.7452 | 0.6690 | 781.9430 | 0.0000 |
-| Spine-Correction-llama3.2-json | 0.0100 | 0.0200 | 0.0250 | 0.0200 | 2966.4912 | 0.0000 |
-| Spine-Correction-llama3.2-triple | 0.0100 | 0.0133 | 0.0157 | 0.0118 | 2931.1789 | 0.0000 |
-| Spine-Correction-qwen2.5-json | 0.5300 | 0.6367 | 0.6508 | 0.6096 | 277.4733 | 0.0000 |
-| Spine-Correction-qwen2.5-triple | 0.4633 | 0.6267 | 0.6483 | 0.5906 | 123.1133 | 0.0000 |
-| Spine-GrammarExpansion-llama3.1-json | 0.4033 | 0.5667 | 0.6119 | 0.5750 | 1612.1959 | 0.7698 |
-| Spine-GrammarExpansion-llama3.1-triple | 0.3500 | 0.5500 | 0.5939 | 0.5279 | 2227.2128 | 0.7736 |
-| Spine-GrammarExpansion-llama3.2-json | 0.0033 | 0.0133 | 0.0182 | 0.0132 | 3033.9489 | 0.0584 |
-| Spine-GrammarExpansion-llama3.2-triple | 0.0067 | 0.0133 | 0.0217 | 0.0193 | 9411.2340 | 0.0780 |
-| Spine-GrammarExpansion-qwen2.5-json | 0.3900 | 0.5300 | 0.5594 | 0.5056 | 599.8467 | 0.7033 |
-| Spine-GrammarExpansion-qwen2.5-triple | 0.3433 | 0.4967 | 0.5294 | 0.4745 | 270.92 | 0.7033 |
-| Spine-RandomExpansion-llama3.1-json | 0.4733 | 0.6333 | 0.6781 | 0.6400 | 1822.5172 | 0.0000 |
-| Spine-RandomExpansion-llama3.1-triple | 0.4033 | 0.5967 | 0.6355 | 0.5810 | 1965.9459 | 0.0000 |
-| Spine-RandomExpansion-llama3.2-json | 0.0033 | 0.0067 | 0.0097 | 0.0081 | 4236.4093 | 0.0000 |
-| Spine-RandomExpansion-llama3.2-triple | 0.0000 | 0.0033 | 0.0090 | 0.0050 | 5177.5649 | 0.0000 |
-| Spine-RandomExpansion-qwen2.5-json | 0.4100 | 0.5500 | 0.5783 | 0.5218 | 1058.8967 | 0.0000 |
-| Spine-RandomExpansion-qwen2.5-triple | 0.3567 | 0.5100 | 0.5361 | 0.4811 | 470.2967 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.1-json | 0.4633 | 0.6333 | 0.6750 | 0.6328 | 1836.80 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.1-triple | 0.3933 | 0.5833 | 0.6255 | 0.5735 | 2002.8581 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.2-json | 0.0000 | 0.0033 | 0.0056 | 0.0033 | 4292.7544 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.2-triple | 0.0000 | 0.0067 | 0.0128 | 0.0057 | 6694.7587 | 0.0000 |
-| Spine-FrequencyExpansion-qwen2.5-json | 0.4133 | 0.5500 | 0.5794 | 0.5209 | 743.2709 | 0.0000 |
-| Spine-FrequencyExpansion-qwen2.5-triple | 0.3567 | 0.5167 | 0.5417 | 0.4814 | 479.9433 | 0.0000 |
-| HRG-Proposed-llama3.1-json | 0.4633 | 0.6433 | 0.7002 | 0.6640 | 1984.3196 | 0.8866 |
-| HRG-Proposed-llama3.1-triple | 0.4133 | 0.6400 | 0.6839 | 0.6110 | 2394.25 | 0.8885 |
-| HRG-Proposed-llama3.2-json | 0.0133 | 0.0367 | 0.0752 | 0.0702 | 3131.8571 | 0.3480 |
-| HRG-Proposed-llama3.2-triple | 0.0133 | 0.0500 | 0.0731 | 0.0532 | 9483.3203 | 0.3594 |
-| HRG-Proposed-qwen2.5-json | 0.4500 | 0.6233 | 0.6528 | 0.5865 | 704.86 | 0.8067 |
-| HRG-Proposed-qwen2.5-triple | 0.3933 | 0.5900 | 0.6228 | 0.5527 | 317.4433 | 0.8067 |
-
-### H.2 WikiMovies
-
-| Method | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx | Coverage |
-|---|---:|---:|---:|---:|---:|---:|
-| Baseline-BFS-llama3.1 | 0.1800 | 0.4500 | 0.4514 | 0.3085 | 23.23 | 0.0000 |
-| Baseline-BFS-llama3.2 | 0.0100 | 0.0200 | 0.0733 | 0.0736 | 15.02 | 0.0000 |
-| Baseline-BFS-qwen2.5 | 0.1600 | 0.4000 | 0.4000 | 0.2714 | 23.24 | 0.0000 |
-| Spine-Only-llama3.1-json | 0.2800 | 0.4400 | 0.4400 | 0.3489 | 34.56 | 0.0000 |
-| Spine-Only-llama3.1-triple | 0.2000 | 0.4700 | 0.4818 | 0.3193 | 15.89 | 0.0000 |
-| Spine-Only-llama3.2-json | 0.0000 | 0.0000 | 0.0100 | 0.0113 | 1.4040 | 0.0000 |
-| Spine-Only-llama3.2-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 2641.33 | 0.0000 |
-| Spine-Only-qwen2.5-json | 0.2200 | 0.3700 | 0.3700 | 0.2812 | 25.13 | 0.0000 |
-| Spine-Only-qwen2.5-triple | 0.0800 | 0.2600 | 0.2600 | 0.1683 | 11.94 | 0.0000 |
-| Spine-Correction-llama3.1-json | 0.2800 | 0.4400 | 0.4400 | 0.3489 | 34.56 | 0.0000 |
-| Spine-Correction-llama3.1-triple | 0.2000 | 0.4700 | 0.4818 | 0.3193 | 15.89 | 0.0000 |
-| Spine-Correction-llama3.2-json | 0.0000 | 0.0000 | 0.0100 | 0.0113 | 1.4040 | 0.0000 |
-| Spine-Correction-llama3.2-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 2641.33 | 0.0000 |
-| Spine-Correction-qwen2.5-json | 0.2200 | 0.3700 | 0.3700 | 0.2812 | 25.13 | 0.0000 |
-| Spine-Correction-qwen2.5-triple | 0.0800 | 0.2600 | 0.2600 | 0.1683 | 11.94 | 0.0000 |
-| Spine-GrammarExpansion-llama3.1-json | 0.2400 | 0.4200 | 0.4200 | 0.3129 | 217.77 | 0.9300 |
-| Spine-GrammarExpansion-llama3.1-triple | 0.1200 | 0.4200 | 0.4250 | 0.2600 | 107.76 | 0.9300 |
-| Spine-GrammarExpansion-llama3.2-json | 0.0000 | 0.0000 | 0.0067 | 0.0090 | 18.79 | 0.0800 |
-| Spine-GrammarExpansion-llama3.2-triple | 0.0000 | 0.0000 | 0.0050 | 0.0040 | 9.52 | 0.0800 |
-| Spine-GrammarExpansion-qwen2.5-json | 0.2200 | 0.3700 | 0.3700 | 0.2795 | 25.67 | 0.9500 |
-| Spine-GrammarExpansion-qwen2.5-triple | 0.0800 | 0.2500 | 0.2500 | 0.1617 | 12.23 | 0.9500 |
-| Spine-RandomExpansion-llama3.1-json | 0.3000 | 0.4800 | 0.4800 | 0.3775 | 127.36 | 0.0000 |
-| Spine-RandomExpansion-llama3.1-triple | 0.2100 | 0.4600 | 0.4718 | 0.3098 | 63.51 | 0.0000 |
-| Spine-RandomExpansion-llama3.2-json | 0.0000 | 0.0000 | 0.0033 | 0.0040 | 5.6869 | 0.0000 |
-| Spine-RandomExpansion-llama3.2-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 2.7677 | 0.0000 |
-| Spine-RandomExpansion-qwen2.5-json | 0.2200 | 0.3700 | 0.3700 | 0.2812 | 25.64 | 0.0000 |
-| Spine-RandomExpansion-qwen2.5-triple | 0.0800 | 0.2600 | 0.2600 | 0.1683 | 12.20 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.1-json | 0.2900 | 0.4800 | 0.4800 | 0.3704 | 129.27 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.1-triple | 0.1800 | 0.4500 | 0.4668 | 0.2942 | 65.39 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.2-json | 0.0000 | 0.0000 | 0.0033 | 0.0040 | 5.6869 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.2-triple | 0.0000 | 0.0000 | 0.0025 | 0.0033 | 2.7677 | 0.0000 |
-| Spine-FrequencyExpansion-qwen2.5-json | 0.2200 | 0.3700 | 0.3700 | 0.2812 | 25.64 | 0.0000 |
-| Spine-FrequencyExpansion-qwen2.5-triple | 0.0800 | 0.2600 | 0.2600 | 0.1683 | 12.20 | 0.0000 |
-| HRG-Proposed-llama3.1-json | 0.2500 | 0.4300 | 0.4350 | 0.3296 | 234.28 | 0.9700 |
-| HRG-Proposed-llama3.1-triple | 0.1300 | 0.4300 | 0.4400 | 0.2767 | 116.02 | 0.9700 |
-| HRG-Proposed-llama3.2-json | 0.0000 | 0.0000 | 0.0492 | 0.0548 | 22.52 | 0.2100 |
-| HRG-Proposed-llama3.2-triple | 0.0000 | 0.0000 | 0.0183 | 0.0170 | 11.23 | 0.2100 |
-| HRG-Proposed-qwen2.5-json | 0.2200 | 0.3700 | 0.3700 | 0.2795 | 25.67 | 0.9500 |
-| HRG-Proposed-qwen2.5-triple | 0.0800 | 0.2500 | 0.2500 | 0.1617 | 12.23 | 0.9500 |
-
-### H.3 MLPQ
-
-| Method | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx | Coverage |
-|---|---:|---:|---:|---:|---:|---:|
-| Baseline-BFS-llama3.1 | 0.2750 | 0.2900 | 0.3100 | 0.3112 | 6215.66 | 0.0000 |
-| Baseline-BFS-llama3.2 | 0.0400 | 0.0400 | 0.0425 | 0.0433 | 6215.66 | 0.0000 |
-| Baseline-BFS-qwen2.5 | 0.2050 | 0.2700 | 0.3010 | 0.2892 | 6215.66 | 0.0000 |
-| Spine-Only-llama3.1-json | 0.0050 | 0.0650 | 0.0909 | 0.0720 | 40.89 | 0.0000 |
-| Spine-Only-llama3.1-triple | 0.0200 | 0.0550 | 0.0775 | 0.0722 | 18.34 | 0.0000 |
-| Spine-Only-llama3.2-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 18.035 | 0.0000 |
-| Spine-Only-llama3.2-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 8.08 | 0.0000 |
-| Spine-Only-qwen2.5-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 4.87 | 0.0000 |
-| Spine-Only-qwen2.5-triple | 0.0000 | 0.0000 | 0.0025 | 0.0034 | 2.03 | 0.0000 |
-| Spine-Correction-llama3.1-json | 0.0100 | 0.0700 | 0.0959 | 0.0770 | 41.52 | 0.0000 |
-| Spine-Correction-llama3.1-triple | 0.0250 | 0.0600 | 0.0825 | 0.0771 | 18.655 | 0.0000 |
-| Spine-Correction-llama3.2-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 18.94 | 0.0000 |
-| Spine-Correction-llama3.2-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 8.425 | 0.0000 |
-| Spine-Correction-qwen2.5-json | 0.0000 | 0.0100 | 0.0100 | 0.0066 | 6.66 | 0.0000 |
-| Spine-Correction-qwen2.5-triple | 0.0050 | 0.0050 | 0.0100 | 0.0117 | 2.82 | 0.0000 |
-| Spine-GrammarExpansion-llama3.1-json | 0.0150 | 0.0300 | 0.0375 | 0.0303 | 39.98 | 0.1400 |
-| Spine-GrammarExpansion-llama3.1-triple | 0.0150 | 0.0250 | 0.0312 | 0.0282 | 18.415 | 0.1400 |
-| Spine-GrammarExpansion-llama3.2-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 2.295 | 0.0300 |
-| Spine-GrammarExpansion-llama3.2-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 1.03 | 0.0300 |
-| Spine-GrammarExpansion-qwen2.5-json | 0.0050 | 0.0050 | 0.0050 | 0.0050 | 10.815 | 0.0450 |
-| Spine-GrammarExpansion-qwen2.5-triple | 0.0050 | 0.0050 | 0.0075 | 0.0083 | 5.035 | 0.0450 |
-| Spine-RandomExpansion-llama3.1-json | 0.0250 | 0.0700 | 0.0909 | 0.0804 | 175.06 | 0.0000 |
-| Spine-RandomExpansion-llama3.1-triple | 0.0450 | 0.0650 | 0.0784 | 0.0740 | 83.965 | 0.0000 |
-| Spine-RandomExpansion-llama3.2-json | 0.0000 | 0.0000 | 0.0010 | 0.0016 | 33.245 | 0.0000 |
-| Spine-RandomExpansion-llama3.2-triple | 0.0000 | 0.0000 | 0.0013 | 0.0020 | 15.235 | 0.0000 |
-| Spine-RandomExpansion-qwen2.5-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 16.495 | 0.0000 |
-| Spine-RandomExpansion-qwen2.5-triple | 0.0000 | 0.0000 | 0.0025 | 0.0025 | 7.145 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.1-json | 0.0100 | 0.0650 | 0.0875 | 0.0706 | 177.76 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.1-triple | 0.0300 | 0.0650 | 0.0804 | 0.0754 | 86.69 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.2-json | 0.0050 | 0.0050 | 0.0060 | 0.0066 | 33.515 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.2-triple | 0.0000 | 0.0000 | 0.0013 | 0.0020 | 15.51 | 0.0000 |
-| Spine-FrequencyExpansion-qwen2.5-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 16.65 | 0.0000 |
-| Spine-FrequencyExpansion-qwen2.5-triple | 0.0000 | 0.0000 | 0.0025 | 0.0025 | 7.31 | 0.0000 |
-| HRG-Proposed-llama3.1-json | 0.0200 | 0.0350 | 0.0425 | 0.0353 | 143.545 | 0.1650 |
-| HRG-Proposed-llama3.1-triple | 0.0200 | 0.0300 | 0.0362 | 0.0331 | 72.66 | 0.1650 |
-| HRG-Proposed-llama3.2-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 8.595 | 0.0650 |
-| HRG-Proposed-llama3.2-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 3.755 | 0.0650 |
-| HRG-Proposed-qwen2.5-json | 0.0150 | 0.0150 | 0.0150 | 0.0150 | 14.69 | 0.0500 |
-| HRG-Proposed-qwen2.5-triple | 0.0150 | 0.0150 | 0.0175 | 0.0184 | 6.715 | 0.0500 |
-
-### H.4 KQAPro
-
-| Method | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx | Coverage |
-|---|---:|---:|---:|---:|---:|---:|
-| Baseline-BFS-llama3.1 | 0.1100 | 0.1167 | 0.1208 | 0.1172 | 3173.4733 | 0.0000 |
-| Baseline-BFS-llama3.2 | 0.0500 | 0.0567 | 0.0600 | 0.0589 | 1661.96 | 0.0000 |
-| Baseline-BFS-qwen2.5 | 0.0833 | 0.1000 | 0.1053 | 0.1019 | 3226.6167 | 0.0000 |
-| Spine-Only-llama3.1-json | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.0733 | 0.0000 |
-| Spine-Only-llama3.1-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.03 | 0.0000 |
-| Spine-Only-llama3.2-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0767 | 0.0000 |
-| Spine-Only-llama3.2-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0367 | 0.0000 |
-| Spine-Only-qwen2.5-json | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.2633 | 0.0000 |
-| Spine-Only-qwen2.5-triple | 0.0000 | 0.0033 | 0.0033 | 0.0022 | 0.1367 | 0.0000 |
-| Spine-Correction-llama3.1-json | 0.0233 | 0.0233 | 0.0242 | 0.0247 | 11.8967 | 0.0000 |
-| Spine-Correction-llama3.1-triple | 0.0233 | 0.0233 | 0.0242 | 0.0247 | 6.0967 | 0.0000 |
-| Spine-Correction-llama3.2-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0767 | 0.0000 |
-| Spine-Correction-llama3.2-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0367 | 0.0000 |
-| Spine-Correction-qwen2.5-json | 0.0167 | 0.0167 | 0.0175 | 0.0180 | 2.1133 | 0.0000 |
-| Spine-Correction-qwen2.5-triple | 0.0133 | 0.0167 | 0.0167 | 0.0156 | 0.9667 | 0.0000 |
-| Spine-GrammarExpansion-llama3.1-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.14 | 0.0033 |
-| Spine-GrammarExpansion-llama3.1-triple | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.0567 | 0.0033 |
-| Spine-GrammarExpansion-llama3.2-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 | 0.0000 |
-| Spine-GrammarExpansion-llama3.2-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 | 0.0000 |
-| Spine-GrammarExpansion-qwen2.5-json | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.4733 | 0.0000 |
-| Spine-GrammarExpansion-qwen2.5-triple | 0.0000 | 0.0033 | 0.0033 | 0.0022 | 0.2667 | 0.0000 |
-| Spine-RandomExpansion-llama3.1-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.14 | 0.0000 |
-| Spine-RandomExpansion-llama3.1-triple | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.0567 | 0.0000 |
-| Spine-RandomExpansion-llama3.2-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0767 | 0.0000 |
-| Spine-RandomExpansion-llama3.2-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0367 | 0.0000 |
-| Spine-RandomExpansion-qwen2.5-json | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.8967 | 0.0000 |
-| Spine-RandomExpansion-qwen2.5-triple | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.4367 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.1-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.14 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.1-triple | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.0567 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.2-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0767 | 0.0000 |
-| Spine-FrequencyExpansion-llama3.2-triple | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0367 | 0.0000 |
-| Spine-FrequencyExpansion-qwen2.5-json | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.8967 | 0.0000 |
-| Spine-FrequencyExpansion-qwen2.5-triple | 0.0033 | 0.0033 | 0.0033 | 0.0033 | 0.4367 | 0.0000 |
-| HRG-Proposed-llama3.1-json | 0.0233 | 0.0233 | 0.0242 | 0.0247 | 13.4233 | 0.0533 |
-| HRG-Proposed-llama3.1-triple | 0.0333 | 0.0333 | 0.0342 | 0.0347 | 6.6533 | 0.0533 |
-| HRG-Proposed-llama3.2-json | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.5667 | 0.0033 |
-| HRG-Proposed-llama3.2-triple | 0.0000 | 0.0000 | 0.0011 | 0.0013 | 0.2733 | 0.0033 |
-| HRG-Proposed-qwen2.5-json | 0.0433 | 0.0500 | 0.0508 | 0.0502 | 3.98 | 0.0367 |
-| HRG-Proposed-qwen2.5-triple | 0.0433 | 0.0467 | 0.0467 | 0.0456 | 1.84 | 0.0367 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 2-hop | 0.3000 | 0.3700 | 0.3800 | 0.3583 | 0.2100 |
+| 3-hop | 0.2300 | 0.2300 | 0.2333 | 0.2333 | 2.6200 |
+
+### HRG-Proposed-llama3.1-triple@mlpq-en-zh-en-ills
+
+| Hop | EM | Hits@1 | MRR | Ans-F1 | Avg Latency |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 2-hop | 0.2000 | 0.2400 | 0.2400 | 0.2267 | 0.1100 |
+| 3-hop | 0.1700 | 0.1800 | 0.1850 | 0.1833 | 0.0800 |
+
+### Baseline-BFS-llama3.1@kqapro-validation
+
+| Hop | EM | Hits@1 | MRR | Ans-F1 | Avg Latency |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1-hop | 0.0700 | 0.0700 | 0.0750 | 0.0709 | 0.5600 |
+| 2-hop | 0.1000 | 0.1100 | 0.1133 | 0.1090 | 0.9100 |
+| 3-hop | 0.1300 | 0.1300 | 0.1300 | 0.1300 | 2.7900 |
+
+### HRG-Proposed-qwen2.5-json@kqapro-validation
+
+| Hop | EM | Hits@1 | MRR | Ans-F1 | Avg Latency |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1-hop | 0.0400 | 0.0400 | 0.0400 | 0.0400 | 1.9000 |
+| 2-hop | 0.0100 | 0.0200 | 0.0200 | 0.0167 | 2.6400 |
+| 3-hop | 0 | 0.0100 | 0.0100 | 0.0100 | 2.9400 |

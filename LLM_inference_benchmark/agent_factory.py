@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import torch
+import transformers
 from transformers import AutoModelForCausalLM
+from transformers.models.auto.configuration_auto import CONFIG_MAPPING
 from LLM_stratiges import HarmonyHFStrategy, GenericHFStrategy
 
 
@@ -70,6 +73,27 @@ def _normalize_device_placement(device) -> str:
     return device_text
 
 
+def _debug_model_load(model_id: str, target_device: str | None) -> None:
+    qwen_keys = sorted(key for key in CONFIG_MAPPING.keys() if "qwen" in key.lower())
+    print(f"[model load] Python executable: {sys.executable}")
+    print(f"[model load] transformers version: {transformers.__version__}")
+    print(f"[model load] transformers path: {transformers.__file__}")
+    print(f"[model load] Qwen config keys: {qwen_keys}")
+    print(f"[model load] model_id: {model_id}")
+    print(f"[model load] target device: {target_device}")
+
+
+def _debug_model_device(model) -> None:
+    try:
+        first_device = next(model.parameters()).device
+    except StopIteration:
+        first_device = "no parameters"
+    device_map = getattr(model, "hf_device_map", None)
+    print(f"[model load] first model parameter device: {first_device}")
+    if device_map:
+        print(f"[model load] hf_device_map: {device_map}")
+
+
 def build_llm_strategy(
     model_id: str,
     max_new_tokens: int = 1024,
@@ -91,6 +115,9 @@ def build_llm_strategy(
 
     target_device = target_device or os.getenv("TARGET_DEVICE")
     target_cuda_devices = _parse_cuda_devices(target_device)
+    if not use_sharding and not target_device:
+        target_device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    _debug_model_load(model_id, target_device)
 
     if use_sharding:
         if target_cuda_devices:
@@ -144,9 +171,7 @@ def build_llm_strategy(
                     "or disable strict mode."
                 )
     else:
-        if not target_device:
-            target_device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        elif len(target_cuda_devices) > 1:
+        if len(target_cuda_devices) > 1:
             raise ValueError(
                 f"target_device={target_device!r} contains multiple GPUs, but model sharding is disabled. "
                 "Set use_model_sharding=True/ENABLE_MODEL_SHARDING=1, or use a single device such as 'cuda:0'."
@@ -155,15 +180,20 @@ def build_llm_strategy(
             _validate_cuda_devices(target_cuda_devices, target_device)
             target_device = f"cuda:{target_cuda_devices[0]}"
 
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            torch_dtype="auto",
-            low_cpu_mem_usage=True,
-            trust_remote_code=trust_remote_code,
-        )
-        model.to(target_device)
+        load_kwargs = {
+            "torch_dtype": "auto",
+            "low_cpu_mem_usage": True,
+            "trust_remote_code": True,
+        }
+        if str(target_device).startswith("cuda"):
+            load_kwargs["device_map"] = {"": target_device}
+
+        model = AutoModelForCausalLM.from_pretrained(model_id, **load_kwargs)
+        if not str(target_device).startswith("cuda"):
+            model.to(target_device)
 
     model.eval()
+    _debug_model_device(model)
 
     if needs_harmony(model_id):
         return HarmonyHFStrategy(model=model, max_new_tokens=max_new_tokens)

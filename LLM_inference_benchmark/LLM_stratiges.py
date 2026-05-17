@@ -17,14 +17,18 @@ class LLMStrategy(ABC):
             return value[0] if value else None
         return value
 
+    def _config_token_id(self, name):
+        return self._first_token_id(getattr(self.model.config, name, None))
+
     def _normalize_generation_token_ids(self):
-        eos_id = self._first_token_id(getattr(self.model.config, "eos_token_id", None))
+        eos_id = self._config_token_id("eos_token_id")
         if isinstance(getattr(self.model.config, "eos_token_id", None), list):
             self.model.config.eos_token_id = eos_id
-        if self.model.config.pad_token_id is None:
-            self.model.config.pad_token_id = eos_id
+        pad_id = self._config_token_id("pad_token_id")
+        if pad_id is None:
+            setattr(self.model.config, "pad_token_id", eos_id)
         else:
-            self.model.config.pad_token_id = self._first_token_id(self.model.config.pad_token_id)
+            self.model.config.pad_token_id = pad_id
 
     def _input_device(self):
         """Use the embedding/input device for dispatched HF models."""
@@ -115,6 +119,14 @@ class GenericHFStrategy(LLMStrategy):
         self.qwen_enable_thinking = os.getenv("QWEN_ENABLE_THINKING", "").strip().lower() in {"1", "true", "yes"}
         model_name = (tokenizer_name_or_path or "").lower()
         self.is_qwen_family = "qwen" in model_name
+        self.is_gemma4_family = "gemma-4" in model_name or "gemma4" in model_name
+        print(
+            "[llm strategy] "
+            f"tokenizer={tokenizer_name_or_path} "
+            f"chat_template={bool(getattr(self.tokenizer, 'chat_template', None))} "
+            f"gemma4_enable_thinking={False if self.is_gemma4_family else 'n/a'}",
+            flush=True,
+        )
 
         # 有些 tokenizer 沒有 pad_token
         tokenizer_eos_id = self._first_token_id(self.tokenizer.eos_token_id)
@@ -160,12 +172,19 @@ class GenericHFStrategy(LLMStrategy):
                 apply_kwargs["chat_template_kwargs"] = {
                     "enable_thinking": self.qwen_enable_thinking,
                 }
+            if self.is_gemma4_family:
+                apply_kwargs["enable_thinking"] = False
             try:
                 prompt = self.tokenizer.apply_chat_template(
                     messages,
                     **apply_kwargs,
                 )
-            except TypeError:
+            except TypeError as exc:
+                if self.is_gemma4_family:
+                    raise TypeError(
+                        f"{self.tokenizer_name_or_path} chat template does not accept "
+                        "enable_thinking=False, so Gemma4 thinking mode cannot be controlled."
+                    ) from exc
                 # Older transformers/tokenizers may not accept chat_template_kwargs.
                 prompt = self.tokenizer.apply_chat_template(
                     messages,
@@ -173,6 +192,12 @@ class GenericHFStrategy(LLMStrategy):
                     add_generation_prompt=True,
                 )
         else:
+            if self.is_gemma4_family:
+                raise ValueError(
+                    f"{self.tokenizer_name_or_path} does not provide a chat template, "
+                    "so Gemma4 thinking mode cannot be controlled. Use the instruction-tuned "
+                    "model google/gemma-4-E4B-it for benchmarking."
+                )
             # Fallback for tokenizers that do not define a chat template.
             prompt = (
                 "System: You are a helpful assistant.\n"

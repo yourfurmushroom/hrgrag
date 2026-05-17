@@ -35,7 +35,7 @@ if [[ "${PORTABLE_NO_VENV:-0}" == "1" ]]; then
     echo "[setup] Running custom torch install command"
     eval "$TORCH_INSTALL_CMD"
   else
-    uv pip install --python "$python_cmd" torch torchvision --index-url https://download.pytorch.org/whl/cu126
+    uv pip install --python "$python_cmd" torch torchvision --index-url https://download.pytorch.org/whl/cu124
   fi
 
   uv pip install --python "$python_cmd" --no-cache -r "$ROOT_DIR/requirements.txt"
@@ -73,7 +73,7 @@ if [[ -n "${TORCH_INSTALL_CMD:-}" ]]; then
   echo "[setup] Running custom torch install command"
   eval "$TORCH_INSTALL_CMD"
 else
-  uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+  uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 fi
 
 uv pip install --no-cache -r "$ROOT_DIR/requirements.txt"
