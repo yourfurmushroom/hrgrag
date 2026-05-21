@@ -26,34 +26,37 @@ KB -> 抽 grammar -> LLM parse entity/chain -> KB 驗證 -> correction / expansi
 ### 0.3 `HRG-Proposed` 快速流程
 
 1. `Parse`：先讓 LLM 輸出 top-k `{"entity": ..., "chain": [...]}` 候選，不是只輸出一條 chain。
-做法：prompt 裡會先放 relation shortlist、few-shot format、必要時再放 grammar hints，要求模型回 JSON array。
+做法：prompt 裡會先放 relation shortlist 和 few-shot format，要求模型回 JSON array。雖然 agent 支援 `grammar hints`，但目前 `benchmark.py` 裡所有主實驗都設成 `use_grammar_hint = False`，所以這批正式結果沒有把 grammar hints 注入 parse prompt。
 
 2. `Ground`：把每個 candidate 的 entity 對到 KB node，避免後面拿錯起點。
 做法：先 exact / normalize lookup，再用 token-overlap fallback 補救 alias、重音、composite alias 這類差一點命中的情況。
 
 3. `Validate`：對每條 candidate chain 做 KB walk，檢查這條路在圖上能不能真的走通。
-做法：從 grounded entity 出發，逐 hop 依 relation 或 `^-1` 方向更新 frontier；只要中途 frontier 變空，這條 chain 就判成 invalid。
+做法：從 grounded entity 出發，逐 hop 更新 frontier；只要中途 frontier 變空，這條 chain 就判成 invalid。
 
 4. `Rerank`：對所有初始 candidates 排序，不是單看 LLM 原始信心分數。
-做法：排序時會綜合 `kb_result.valid`、LLM confidence、candidate 來源、grammar hit、same-arity hit、matched rule 數量。
+做法：排序時會先看 `kb_result.valid`，若有啟用 valid-chain fallback rerank，還會插入 `llm_rerank_score`；之後才看 same-arity / grammar hit / grammar score / failure progress / frontier survivability / source / confidence。
 
 5. `Branch A`：如果初始 candidates 裡已經有至少一條 valid chain，流程**不做 correction**，直接往下建 subgraph。
 做法：程式是先看 `any(c["kb_result"]["valid"] for c in ranked_candidates)`，只要為真就跳過 correction。
 
 6. `Correct`：只有在**所有初始 candidates 都 invalid** 時，才會產生補救 candidates。
 做法：correction pool 會合併三路來源：
-1. direction flip
-2. grammar fallback
-3. LLM correction
+1. grammar fallback
+2. LLM correction
+3. `direction flip` 介面雖然還在，但目前 `_make_direction_flip_candidates()` 直接回空陣列，正式流程中等於停用
 
-7. `Branch B`：如果 correction 後還是沒有任何 valid chain，流程直接結束，狀態是 `no_valid_chain`。
-做法：這時不會進 subgraph construction，也不會進 expansion，更不會進 answer generation with KG context。
+7. `Branch B`：如果 correction 後還是沒有任何 valid chain，`HRG-Proposed` 不會立刻結束，而是還會進一步做 deterministic valid-chain fallback。
+做法：它會從起始 entity 出發，用 KG adjacency 枚舉保證可執行的 relation chains，必要時再讓 LLM 只在「已知 valid」的候選之間 rerank。只有這一步也找不到 valid chain 時，才真的回 `no_valid_chain`。
 
 8. `Spine`：只對 valid candidates 建 subgraph，而且每條 valid chain 都先取 strict spine。
 做法：strict spine 只保留這條 chain 真正走到的核心邊，不會一開始就把周邊鄰居全部攤開。
 
 9. `Expand`：只有當 candidate 已經 valid、而且方法有開 expansion 時，才在 spine 外補邊。
-做法：`HRG-Proposed` 用 strict grammar expansion，只補符合 matched rules、機率門檻、per-node cap 的邊；不是所有成功題都無限制擴張。
+做法：`HRG-Proposed` 用 strict grammar expansion，但**只在 multi-hop 題上真的加邊**；single-hop 題只保留 matched rules / grammar hit，不做 expansion。除此之外，現在還多了一層保守 gating：
+1. top matched rule 分數必須 `>= min_grammar_score_for_expansion`
+2. `spine_edges` 數量不能超過 `max_spine_edges_for_expansion`
+3. 規則篩選時實際上用的是 rule 的 `count`（若檔案沒有 `probability` 欄位），再配合 `expansion_min_prob` 與 `expansion_per_node_cap`
 
 10. `Subgraph Rank`：對每個 valid candidate 建好的 subgraph 再做一次排序，最後只選一個最好的。
 做法：排序時會看 `has_edges`、same-arity、grammar hit、grammar score、spine size、expanded size、compactness，不是第一條 valid chain 自動獲勝。
@@ -78,7 +81,9 @@ Parse top-k candidates
    -> 直接拿 valid candidates 建 subgraph
 -> 只有當初始 candidates 全部 invalid
    -> 才做 correction
-   -> correction 後若仍無 valid chain，直接結束
+   -> correction 後若仍無 valid chain
+      -> 再做 deterministic KG-valid chain fallback
+      -> fallback 後若仍無 valid chain，才直接結束
 -> 對 valid candidates 建 spine / expansion subgraph
 -> subgraph rerank
 -> 只選最佳一個 subgraph 去 answer
@@ -87,29 +92,31 @@ Parse top-k candidates
 #### 這段最容易講錯的地方
 
 1. `Correction` 不是每題都做，而是**只有全部初始 candidates 都失敗時才做**。
-2. `Expansion` 不是 parse 一成功就立刻做，而是**先要有 valid chain，然後才對 valid candidate 建 subgraph 時做**。
-3. `HRG-Proposed` 不是看到第一條 valid chain 就直接停，而是**會先收所有 valid candidates，再做 subgraph ranking，最後只選最好的一個**。
-4. `json / triple` 不會改 retrieval 結果，只會改最後 answer generation 看到的 context 文字格式。
+2. `Correction` 裡目前沒有真的做 direction flip；那個函式存在，但回傳空列表。
+3. `HRG-Proposed` 在 correction 失敗後，還有一層 deterministic valid-chain fallback；不是 correction 一失敗就終止。
+4. `Expansion` 不是 parse 一成功就立刻做，而是**先要有 valid chain，然後才對 valid candidate 建 subgraph 時做**。
+5. `HRG-Proposed` 不是看到第一條 valid chain 就直接停，而是**會先收所有 valid candidates，再做 subgraph ranking，最後只選最好的一個**。
+6. `json / triple` 不會改 retrieval 結果，只會改最後 answer generation 看到的 context 文字格式。
 
 #### `HRG-Proposed` 一句話版本
 
-`HRG-Proposed = entity/chain parse + grammar-aware rerank + fallback correction + strict grammar expansion + answer generation`
+`HRG-Proposed = entity/chain parse + grammar-aware rerank + fallback correction + deterministic valid-chain fallback + gated strict grammar expansion + answer generation`
 
 ### 0.4 一句話消融實驗
 
 1. `Baseline-BFS`：不用 chain、也不用 grammar，直接從 entity 做 BFS 撈子圖。
 2. `Spine-Only`：只信 LLM 預測的 chain，嚴格照 chain 取 spine。
-3. `Spine-Correction`：先照 chain 取 spine，失敗時再用 direction flip、grammar fallback、LLM correction 補救。
+3. `Spine-Correction`：先照 chain 取 spine，失敗時再用 grammar fallback、LLM correction 補救；程式裡保留了 direction flip 介面，但目前未啟用。
 4. `Spine-GrammarExpansion`：先照 chain 取 spine，再用 grammar 命中的 rule 去擴周邊鄰邊。
 5. `Spine-RandomExpansion`：先照 chain 取 spine，再隨機補一些鄰邊當對照組。
 6. `Spine-FrequencyExpansion`：先照 chain 取 spine，再補高頻 relation 鄰邊當對照組。
-7. `HRG-Proposed`：先照 chain 取 spine，再加 grammar-aware rerank、strict grammar expansion 和 correction。
+7. `HRG-Proposed`：先照 chain 取 spine，再加 grammar-aware rerank、strict grammar expansion、correction，還有 deterministic valid-chain fallback。
 8. `json / triple`：不是不同 retrieval，而是同一個子圖用兩種不同序列化格式餵給 LLM。
 
 ### 0.5 一句話資料集
 
 1. `MetaQA`：乾淨的單語 atomic triples，最接近你方法原本假設，弱結果通常比較像方法問題。
-   例子：`[Tom Hanks] starred_actors^-1 directed_by ?` 這類 2-hop 問題，在圖上就是很標準的 chain traversal。
+   例子：像 `actor -> movie -> director` 這類 2-hop 問題，在圖上就是很標準的 chain traversal。
 2. `WikiMovies`：原始 KB 不是天然 atomic triples，還有 composite tail，所以要先做 parser 修正與 KB normalization 才能公平比較。
    例子：`The Inbetweeners 2 starred_actors James Buckley, Simon Bird, Blake Harrison, Joe Thomas` 原始上是一行字串，但對圖推理來說應該拆成 4 條 atomic triples。
 3. `MLPQ`：問題語言可分開，但 KB 可以是 bilingual fused 或 monolingual sampled，所以它同時在測跨語言 grounding 與 chain executability。
@@ -141,7 +148,7 @@ Parse top-k candidates
 
 ### 0.7 一句話 grammar matching
 
-目前 grammar matching 不是逐 hop 一條一條照順序精確配對，而是先把 chain 去方向後做 relation label 的 subset match，再用 same-arity 優先過濾。
+目前 grammar matching 不是逐 hop 一條一條照順序精確配對，而是先把 chain 去方向後做 relation label 的 subset match；之後在 rule selection 與 ranking 時，會優先偏好 same-arity 規則。
 
 ---
 
@@ -321,6 +328,7 @@ HRG 抽取時不是直接在原始有向 KG 上做 clique tree，而是先做 sk
 1. `K_SAMPLES = 4`
 2. `S_SAMPLE_SIZE = 500`
 3. `BFS_MAX_BRANCH = 30`
+4. `SEED_DEGREE_QUANTILE = 0.80`
 
 #### 為什麼要這樣
 
@@ -404,7 +412,7 @@ merge_duplicate_rules(rules)
 
 完全相同，就合併成一條，然後把 `count` 加總。
 
-這個 `count` 後面 online 階段會拿來當規則強度排序依據。
+這個 `count` 後面 online 階段會直接拿來當規則強度排序依據。注意：目前 extractor 存出的 JSON **只有 `count`，沒有另外寫 `probability` 欄位**；online 端凡是寫成 `probability/count` 的地方，這批正式 grammar 實際上大多都會退回用 `count`。
 
 ---
 
@@ -549,7 +557,7 @@ The Inbetweeners 2 starred_actors James Buckley, Simon Bird, Blake Harrison, Joe
 
 1. 它語意上像很多 triples
 2. 但檔案裡實際上只是一行
-3. 若不轉換成 atomic triples，`starred_actors^-1` 這種反向查詢在圖上不夠自然
+3. 若不轉換成 atomic triples，某些 actor-centered 查詢在圖上不夠自然
 
 所以這個 repo 才額外做了兩件事：
 
@@ -705,7 +713,7 @@ LLM 要回：
 
 ```json
 [
-  {"entity": "Tom Hanks", "chain": ["starred_actors^-1", "directed_by"], "confidence": 0.82}
+  {"entity": "Tom Hanks", "chain": ["starred_actors", "directed_by"], "confidence": 0.82}
 ]
 ```
 
@@ -741,9 +749,9 @@ question
 
 而這個節點在 KB 裡的一跳鄰邊包含：
 
-1. `starred_actors^-1`
-2. `written_by^-1`
-3. `directed_by^-1`
+1. `starred_actors`
+2. `written_by`
+3. `directed_by`
 
 那這些 relation 會先被放進 shortlist，再由 lexical overlap 與 grammar labels 補其他候選。
 
@@ -803,7 +811,7 @@ James Buckley, Simon Bird, Blake Harrison, Joe Thomas
 
 1. `directed by`
 2. `directed_by`
-3. `directed_by^-1`
+3. `directed_by`
 
 都會再經過 `_fuzzy_match_relation()` 對齊到系統實際允許的 relation token。
 
@@ -816,13 +824,13 @@ James Buckley, Simon Bird, Blake Harrison, Joe Thomas
 如果 candidate 是：
 
 ```json
-{"entity": "Tom Hanks", "chain": ["starred_actors^-1", "directed_by"]}
+{"entity": "Tom Hanks", "chain": ["starred_actors", "directed_by"]}
 ```
 
 系統會：
 
 1. 先把 `Tom Hanks` 對到 KB 節點
-2. 第 1 hop 走 `starred_actors^-1`
+2. 第 1 hop 走 `starred_actors`
 3. 看能不能找到電影集合
 4. 第 2 hop 從這些電影走 `directed_by`
 5. 若任何一步 frontier 變空，就視為 invalid
@@ -844,7 +852,7 @@ James Buckley, Simon Bird, Blake Harrison, Joe Thomas
 實作在 `HRGMatcher.match_rules()`，真正邏輯是：
 
 1. 先把 chain 去方向
-2. 例如 `starred_actors^-1` 會變成 `starred_actors`
+2. 例如 relation token 會先被正規化到系統使用的 relation label
 3. 把整條 chain 變成一個 bare relation set
 4. 只要某條 grammar rule 的 terminal labels 包含這個 set，就算 match
 
@@ -859,7 +867,7 @@ bare_chain ⊆ rule_labels
 若 predicted chain 是：
 
 ```text
-["starred_actors^-1", "directed_by"]
+["starred_actors", "directed_by"]
 ```
 
 會先變成：
@@ -924,7 +932,7 @@ fallback 有三種來源：
 可能改成：
 
 ```text
-["written_by^-1"]
+["written_by"]
 ```
 
 #### grammar fallback 例子
@@ -1008,7 +1016,7 @@ spine 就是由 predicted chain 直接走出來的主路徑邊集合。
 例如：
 
 ```text
-Tom_Hanks --starred_actors^-1--> Cast_Away --directed_by--> Robert_Zemeckis
+Tom_Hanks --starred_actors--> Cast_Away --directed_by--> Robert_Zemeckis
 ```
 
 這些邊就是 spine。
@@ -1022,10 +1030,9 @@ spine 由 `_find_subgraph_multi_hop_kb_strict()` 產生。
 1. frontier 初始為起始 entity
 2. 逐 hop 讀 chain 裡的 relation token
 3. 若 token 是正向 relation，就從 `kb_out[entity][rel]` 找 tails
-4. 若 token 是 `rel^-1`，就從 `kb_in[entity][rel]` 找 heads
-5. 每經過一條邊就累加到 `edge_counts`
-6. 下一 hop frontier 變成這些邊抵達的節點集合
-7. 若某 hop 之後 frontier 變空，就停止
+4. 每經過一條邊就累加到 `edge_counts`
+5. 下一 hop frontier 變成這些邊抵達的節點集合
+6. 若某 hop 之後 frontier 變空，就停止
 
 所以 spine 不是單一路徑，而是：
 
@@ -1238,21 +1245,30 @@ chain 預測 relation 數量
 
 `HRG-Proposed-*` 不是新的推理架構，而是 `KnowledgeGraphAgent` 打開下列開關的組合：
 
-1. `use_grammar_expansion = True`
-2. `use_fallback_correction = True`
-3. `use_grammar_rerank = True`
-4. `use_grammar_hint = False`
-5. `expansion_strict = True`
-6. `expansion_min_prob = 0.005`
-7. `expansion_per_node_cap = 5`
+1. `num_candidates = 8`
+2. `use_grammar_expansion = True`
+3. `use_fallback_correction = True`
+4. `use_grammar_rerank = True`
+5. `use_deterministic_valid_chain_fallback = True`
+6. `use_valid_chain_llm_rerank = True`
+7. `valid_chain_fallback_topk = 12`
+8. `valid_chain_fallback_beam_width = 48`
+9. `valid_chain_fallback_branch = 16`
+10. `use_grammar_hint = False`
+11. `expansion_strict = True`
+12. `expansion_min_prob = 2.0`
+13. `expansion_per_node_cap = 4`
+14. `min_grammar_score_for_expansion = 2.0`
+15. `max_spine_edges_for_expansion = 80`
 
 也就是：
 
 ```text
 Spine retrieval
-+ strict grammar-based expansion
++ gated strict grammar-based expansion
 + grammar-aware rerank
 + fallback correction
++ deterministic KG-valid fallback
 ```
 
 不是：
@@ -1260,8 +1276,9 @@ Spine retrieval
 1. grammar-first parsing
 2. grammar-guided BFS retrieval
 3. prompt-injected grammar hints
+4. direction-flip correction
 
-這點口試很重要，因為名字叫 `HRG-Proposed` 很容易讓人誤會它用了所有 grammar 功能；其實這個 benchmark 裡的 proposed，是「嚴格 grammar expansion + grammar-aware rerank + correction」的組合版。
+這點口試很重要，因為名字叫 `HRG-Proposed` 很容易讓人誤會它用了所有 grammar 功能；其實這個 benchmark 裡的 proposed，是「較高 search budget + gated strict grammar expansion + grammar-aware rerank + correction + deterministic valid fallback」的組合版。
 
 #### 各方法對照表
 
@@ -1292,33 +1309,37 @@ Spine retrieval
    - 再加 frequency expansion
 7. `HRG-Proposed-<backbone>-{json|triple}`
    - Spine-Only
+   - 提高 candidate / valid-fallback 搜尋預算
    - 加 grammar expansion
    - 加 grammar rerank
    - 加 correction
-   - expansion 用 strict mode
+   - 加 deterministic valid-chain fallback
+   - expansion 用 strict mode，且只有 grammar 分數夠高、spine 不太大時才真的加邊
 
 #### Candidate ranking 怎麼排，不是黑盒
 
 `_score_candidate()` 是 lexicographic tuple，優先序固定如下：
 
 1. `valid`：KB 上能不能完整走通
-2. `same_arity_hit`：有沒有 match 到 hop 數相同的 grammar rule
-3. `grammar_hit`
-4. `grammar_score`
-5. `grammar_matched_count`
-6. `failure_progress`
-7. `step_survival`
-8. `final_size`
-9. `source_priority`
-10. `llm_confidence`
-11. `llm_prior`
+2. `llm_rerank_score`：只在 deterministic valid fallback 的 rerank 階段有值
+3. `same_arity_hit`：有沒有 match 到 hop 數相同的 grammar rule
+4. `grammar_hit`
+5. `grammar_score`
+6. `grammar_matched_count`
+7. `failure_progress`
+8. `step_survival`
+9. `final_size`
+10. `source_priority`
+11. `llm_confidence`
+12. `llm_prior`
 
 這代表：
 
 1. 先求能不能走通
-2. 再求 grammar 相容
-3. 再看若失敗，是失敗在第幾 hop
-4. 最後才用 LLM 自己的信心當 tie-breaker
+2. 若是 deterministic valid fallback 階段，先利用 LLM 只在 valid chains 間再排一次
+3. 再求 grammar 相容
+4. 再看若失敗，是失敗在第幾 hop
+5. 最後才用 LLM 自己的信心當 tie-breaker
 
 所以這不是單純「信 LLM」，而是明確地把 KB executability 擺在最前面。
 
@@ -1405,12 +1426,37 @@ entity + predicted relation chain centered retrieval
 #### 委員可能追問的幾個真正敏感點
 
 1. `grammar_score` 現在其實直接用 `count/probability`，沒有做 dataset-size normalization
-2. `expansion_min_prob=0.005` 在目前 grammar JSON 裡實際上常常等價於「count 門檻非常低」，因為 extractor 存的是 `count`
+2. `expansion_min_prob` 現在在 `HRG-Proposed` 已提高到 `2.0`；由於 extractor 存的是 `count`，它現在比較接近「rule count 門檻」而不是機率門檻
 3. grammar matching 用的是 relation set inclusion，不是 exact ordered chain match
-4. grammar expansion 用的是 label union，而不是 RHS attachment-structure preserving expansion
-5. retrieval precision / recall 是以 subgraph node 是否涵蓋 gold answer 來算，不是 edge-level metric
-6. `coverage` 的定義是 grammar hit 題數 / total questions，不是答案答對率
-7. `answerable_rate` 在目前程式裡幾乎等於輸出字串是否非空，所以很多失敗題仍可能算 answerable
+4. chain validation 與 strict spine traversal 的實作細節，文件以目前保留的 relation-chain 邏輯為準，不再額外引入方向 suffix 記號描述
+5. grammar expansion 用的是 label union，而不是 RHS attachment-structure preserving expansion
+6. `HRG-Proposed` 的 expansion 現在還多了兩個 gate：`min_grammar_score_for_expansion = 2.0`、`max_spine_edges_for_expansion = 80`
+7. single-hop 題即使 grammar hit，通常也不會真的做 expansion；主要只保留 matched rules / grammar flags
+8. retrieval precision / recall 是以 subgraph node 是否涵蓋 gold answer 來算，不是 edge-level metric
+9. `coverage` 的定義是 grammar hit 題數 / total questions，不是答案答對率
+10. `answerable_rate` 在目前程式裡幾乎等於輸出字串是否非空，所以很多失敗題仍可能算 answerable
+
+#### benchmark.py 最近又加了一層 dataset-specific tuning
+
+這層 tuning 不改方法名稱，但會在初始化 agent 前，根據 dataset 放大部分搜尋預算。
+
+目前實作是：
+
+1. `MLPQ`
+   - `num_candidates >= 8`
+   - `valid_chain_fallback_topk >= 12`
+   - `valid_chain_fallback_beam_width >= 40`
+   - `valid_chain_fallback_branch >= 16`
+   - `per_entity_cap >= 700`
+2. `KQAPro`
+   - `num_candidates >= 10`
+   - `valid_chain_fallback_topk >= 16`
+   - `valid_chain_fallback_beam_width >= 64`
+   - `valid_chain_fallback_branch >= 20`
+   - `per_entity_cap >= 800`
+   - `max_frontier >= 30000`
+
+這代表目前 benchmark 不再是所有資料集都完全共用同一組搜尋預算；在 `MLPQ` / `KQAPro` 上，系統會刻意放大 candidate discovery 與 deterministic fallback 的搜索空間。
 
 這幾點若先寫清楚，口試時比較不會被抓到說法太泛。
 
@@ -1883,6 +1929,7 @@ WikiMovies `Baseline-BFS-llama3.1`：
 1. 如果只補 correction
 2. 不讓 grammar 介入
 3. 能不能救回 invalid chain
+4. 補充：目前 correction 裡真正有效的是 `grammar fallback + LLM correction`；`direction flip` 函式存在，但實作回傳空列表
 
 ### 7.9.4 Spine-GrammarExpansion
 
@@ -1946,19 +1993,29 @@ WikiMovies `Baseline-BFS-llama3.1`：
 
 `HRG-Proposed-*` 的設定是：
 
-1. `use_grammar_rerank = True`
-2. `use_grammar_expansion = True`
-3. `use_fallback_correction = True`
-4. `use_grammar_hint = False`
-5. `expansion_strict = True`
-6. `expansion_min_prob = 0.005`
-7. `expansion_per_node_cap = 5`
+1. `num_candidates = 8`
+2. `use_grammar_rerank = True`
+3. `use_grammar_expansion = True`
+4. `use_fallback_correction = True`
+5. `use_deterministic_valid_chain_fallback = True`
+6. `use_valid_chain_llm_rerank = True`
+7. `valid_chain_fallback_topk = 12`
+8. `valid_chain_fallback_beam_width = 48`
+9. `valid_chain_fallback_branch = 16`
+10. `use_grammar_hint = False`
+11. `expansion_strict = True`
+12. `expansion_min_prob = 2.0`
+13. `expansion_per_node_cap = 4`
+14. `min_grammar_score_for_expansion = 2.0`
+15. `max_spine_edges_for_expansion = 80`
 
-這代表它同時測三件事：
+這代表它同時測五件事：
 
-1. grammar 前移到 rerank
-2. grammar 擴張 spine 周邊 context
-3. invalid chain 時用 correction 補救
+1. 比其他 spine 系列更大的 candidate / fallback 搜尋預算
+2. grammar 前移到 rerank
+3. grammar 擴張 spine 周邊 context，但現在有保守 gating
+4. invalid chain 時用 correction 補救
+5. correction 仍失敗時，再用 deterministic valid-chain fallback 從 KG 枚舉保證可執行的 chains
 
 所以它是目前 benchmark 裡最完整的 proposed 組合。
 
@@ -2053,6 +2110,48 @@ WikiMovies 第 0 題：
 | KQAPro | 39 | 300 | 44 | no |
 
 這次完整結果的 backbone 是：`llama3.1`、`gemma4`、`qwen2.5`。舊文件中出現的 `llama3.2` 數字已不再作為本輪結果。
+
+### 9.0 結果稽核摘要
+
+我重新對照了目前磁碟上的四份主結果：
+
+1. `artifacts/metaqa-vanilla-test/results/benchmark_results.json`
+2. `artifacts/wikimovies-wiki_entities-test/results/benchmark_results.json`
+3. `artifacts/mlpq-en-zh-en-ills/results/benchmark_results.json`
+4. `artifacts/kqapro-validation/results/benchmark_results.json`
+
+先說結論：
+
+1. 文件前半段對 workflow 的描述，和目前程式邏輯大致一致。
+2. `39` 個 experiment、三個 backbone 都齊這件事也和實際結果一致。
+3. 但本節後面的多個主表數字，和目前 `benchmark_results.json` 已經有明顯出入，應視為舊版摘要，不能再當最新主結論引用。
+
+#### 9.0.1 目前四個資料集的實際最佳結果
+
+| Dataset | Actual Best Experiment | EM | Hits@1 | MRR | Ans-F1 | Avg Ctx | Avg Subgraph | Gen Fail |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| MetaQA | Spine-Correction-llama3.1-json | 0.5200 | 0.6967 | 0.7558 | 0.7222 | 1638.2 | 76.3 | 0 |
+| WikiMovies | Spine-GrammarExpansion-llama3.1-json* | 0.2900 | 0.4900 | 0.4900 | 0.3763 | 40.4 | 1.6 | 0 |
+| MLPQ | Baseline-BFS-gemma4 | 0.2750 | 0.2850 | 0.2917 | 0.2900 | 6363.2 | 418.1 | 40 |
+| KQAPro | HRG-Proposed-llama3.1-triple | 0.1433 | 0.1600 | 0.1659 | 0.1601 | 3813.1 | 302.6 | 1 |
+
+`*` WikiMovies 上 `Spine-GrammarExpansion-llama3.1-json` 和 `HRG-Proposed-llama3.1-json` 的 `Ans-F1 = 0.3763`、`EM = 0.2900` 持平；若只看 `Hits@1 / MRR`，前者略高。
+
+#### 9.0.2 和本節既有敘述的主要出入
+
+1. `MetaQA` 的最佳數字被寫高了。文件表中寫成 `EM 0.5433 / Ans-F1 0.7288`，但目前主結果實際是 `EM 0.5200 / Ans-F1 0.7222`。
+2. `WikiMovies` 的「最佳是 HRG-Proposed-json」這個大方向大致可接受，但現在至少已經和 `Spine-GrammarExpansion-llama3.1-json` 持平，不再是單獨明顯領先。
+3. `MLPQ` 的最佳方法不是 `Baseline-BFS-llama3.1`，而是 `Baseline-BFS-gemma4`，目前 `Ans-F1 = 0.2900`、`EM = 0.2750`。
+4. `KQAPro` 的主結論已經反轉。文件表中寫 `Baseline-BFS-llama3.1` 最佳，但目前實際最佳是 `HRG-Proposed-llama3.1-triple`，`Ans-F1 = 0.1601` 明顯高於 `Baseline-BFS-llama3.1` 的 `0.1133`。
+5. `9.1` 的跨資料集平均表也不是最新值，因為它隱含的 dataset-best 排序已和目前 JSON 不一致，特別是 `KQAPro` 與 `MLPQ` 兩處。
+6. `9.7` 的一句話結論裡，「`Baseline-BFS` 仍是最高平均 EM」和「`HRG-Proposed-json` 是最佳 tradeoff」需要保留條件地講；因為目前 `KQAPro` 已出現 HRG-Proposed-triple 勝過 BFS，而 `MLPQ` 則仍由 BFS 領先，結論已經是 dataset-dependent，不適合再寫成單一句總結。
+
+#### 9.0.3 目前比較穩的結果解讀
+
+1. `MetaQA` 仍然最支持 chain-guided / correction 型方法；`Spine-Correction-llama3.1-json` 是這個資料集的最強設定。
+2. `WikiMovies` 仍然呈現「小 context 也能接近或超過 BFS」的現象，但最佳方法已不是唯一由 `HRG-Proposed` 壟斷。
+3. `MLPQ` 目前仍主要是 BFS 優勢盤，表示 multilingual grounding / schema adaptation 仍是主瓶頸。
+4. `KQAPro` 目前不能再簡單說「BFS 最強」；至少在現在這批 artifact 裡，`HRG-Proposed-llama3.1-triple` 已經超過 BFS。
 
 ### 9.1 跨資料集整體比較
 

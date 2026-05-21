@@ -47,7 +47,7 @@ class HRGMatcher:
         return [l for l in labels if l]
 
     def _chain_to_bare(self, chain: List[str]) -> List[str]:
-        return [c[:-3] if c.endswith("^-1") else c for c in chain]
+        return list(chain)
 
     def match_rules(self, chain: List[str]) -> List[Dict[str, Any]]:
         if not chain:
@@ -61,7 +61,7 @@ class HRGMatcher:
                 matched.append(rule)
 
         matched.sort(key=lambda r: r.get("probability", r.get("count", 0)), reverse=True)
-        print(f"[HRGMatcher] chain={chain} -> bare={bare_chain} -> matched {len(matched)} rules")
+        print(f"[HRGMatcher] chain={chain} -> labels={bare_chain} -> matched {len(matched)} rules")
         return matched
 
     def summarize_matched(self, rules: List[Dict[str, Any]]) -> str:
@@ -135,6 +135,8 @@ class KnowledgeGraphAgent:
         expansion_strict: bool = False,
         expansion_min_prob: float = 0.005,   # min rule probability/count to use
         expansion_per_node_cap: int = 10,    # max expansion edges added per node
+        min_grammar_score_for_expansion: float = 0.0,
+        max_spine_edges_for_expansion: Optional[int] = None,
         use_random_expansion: bool = False,
         use_frequency_expansion: bool = False,
         random_expansion_seed: int = 0,
@@ -173,6 +175,8 @@ class KnowledgeGraphAgent:
         self.expansion_strict = expansion_strict
         self.expansion_min_prob = expansion_min_prob
         self.expansion_per_node_cap = expansion_per_node_cap
+        self.min_grammar_score_for_expansion = min_grammar_score_for_expansion
+        self.max_spine_edges_for_expansion = max_spine_edges_for_expansion
         self.use_random_expansion = use_random_expansion
         self.use_frequency_expansion = use_frequency_expansion
         self.random_expansion_seed = random_expansion_seed
@@ -424,8 +428,6 @@ class KnowledgeGraphAgent:
         if raw in self.allowed_rel_tokens:
             return raw
         norm = raw.strip().lower().replace(" ", "_")
-        if norm.endswith("^-1"):
-            norm = norm[:-3]
         for tok in self.allowed_rel_tokens:
             tnorm = tok.lower().replace(" ", "_")
             if tnorm == norm:
@@ -440,11 +442,8 @@ class KnowledgeGraphAgent:
             return m.group(1).strip()
         return entity
 
-    def _flip_relation_direction(self, rel: str) -> str:
-        return rel[:-3] if rel.endswith("^-1") else rel
-
     def _chain_to_bare(self, chain: List[str]) -> List[str]:
-        return [c[:-3] if c.endswith("^-1") else c for c in chain]
+        return list(chain)
 
     def _dedup_candidates(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         seen = set()
@@ -465,7 +464,6 @@ class KnowledgeGraphAgent:
 
     def _normalize_match_text(self, text: str) -> str:
         text = (text or "").lower()
-        text = text.replace("^-1", " ")
         text = text.replace("_", " ")
         text = re.sub(r"[^\w\s]", " ", text)
         return re.sub(r"\s+", " ", text).strip()
@@ -696,7 +694,7 @@ class KnowledgeGraphAgent:
         return tail if head == current else head
 
     def _neighbors_for_token(self, ent: str, rel_token: str) -> List[Tuple[str, str, str]]:
-        rel = rel_token[:-3] if rel_token.endswith("^-1") else rel_token
+        rel = rel_token
         edges: List[Tuple[str, str, str]] = []
 
         tails = list(self.kb_out.get(ent, {}).get(rel, []))
@@ -1171,13 +1169,11 @@ class KnowledgeGraphAgent:
 
     def _make_grammar_fallback_candidates(self, entity: str, chain: List[str], top_k: int = 5) -> List[Dict[str, Any]]:
         """
-        Fallback candidates from grammar rules by matching bare relations.
-        Direction suffixes are intentionally not emitted.
+        Fallback candidates from grammar rules by matching relation labels.
         """
         if not self.hrg:
             return []
 
-        bare_chain = self._chain_to_bare(chain)
         matched_rules = self.hrg.match_rules(chain)
 
         # if no subset match, use top frequent rules as very weak fallback
@@ -1201,7 +1197,7 @@ class KnowledgeGraphAgent:
             for rel in rels[:max(1, len(chain))]:
                 found = None
                 for old_rel in chain:
-                    if (old_rel[:-3] if old_rel.endswith("^-1") else old_rel) == rel:
+                    if old_rel == rel:
                         found = rel
                         break
                 reconstructed.append(found if found else rel)
@@ -1229,11 +1225,10 @@ class KnowledgeGraphAgent:
         preferred_bare_rels: Set[str],
         edge_count: int,
     ) -> float:
-        bare_rel = rel_token[:-3] if rel_token.endswith("^-1") else rel_token
-        rel_terms = set(self._normalize_match_text(bare_rel).split())
+        rel_terms = set(self._normalize_match_text(rel_token).split())
         overlap = len(question_terms & rel_terms)
-        contains = sum(1 for term in question_terms if len(term) >= 3 and term in self._normalize_match_text(bare_rel))
-        preferred_bonus = 4.0 if bare_rel in preferred_bare_rels else 0.0
+        contains = sum(1 for term in question_terms if len(term) >= 3 and term in self._normalize_match_text(rel_token))
+        preferred_bonus = 4.0 if rel_token in preferred_bare_rels else 0.0
         return overlap * 8.0 + contains * 2.0 + preferred_bonus + min(edge_count, 10) * 0.1
 
     def _actual_relation_options_from_frontier(
@@ -1312,7 +1307,7 @@ class KnowledgeGraphAgent:
         for cand in seed_candidates:
             preferred_bare_rels.update(self._chain_to_bare(cand.get("chain") or []))
         for rel in self._select_relation_prompt_candidates(user_prompt, limit=32):
-            preferred_bare_rels.add(rel[:-3] if rel.endswith("^-1") else rel)
+            preferred_bare_rels.add(rel)
 
         question_terms = set(self._normalize_match_text(user_prompt).split())
         max_depth = max(target_depths)
@@ -1589,9 +1584,23 @@ class KnowledgeGraphAgent:
         matched_rules = []
         expanded_edges = []
         is_single_hop = len(chain) == 1
+        top_rule_score = 0.0
+        if selected_rules:
+            top_rule_score = self._safe_float(
+                selected_rules[0].get("probability", selected_rules[0].get("count", 0)),
+                0.0,
+            )
+        allow_grammar_expansion = (
+            bool(selected_rules)
+            and top_rule_score >= self.min_grammar_score_for_expansion
+            and (
+                self.max_spine_edges_for_expansion is None
+                or len(spine_edges) <= self.max_spine_edges_for_expansion
+            )
+        )
         if not self.use_grammar_guided_retrieval and self.hrg and self.use_grammar_expansion and not is_single_hop:
             matched_rules = selected_rules
-            if matched_rules:
+            if allow_grammar_expansion:
                 expanded_edges = self._expand_subgraph_by_grammar(spine_edges, matched_rules, chain=chain)
         elif self.use_frequency_expansion and not is_single_hop:
             expanded_edges = self._expand_subgraph_by_relation_frequency(spine_edges)

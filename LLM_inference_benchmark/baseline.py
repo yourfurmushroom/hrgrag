@@ -54,7 +54,7 @@ class BaselineKnowledgeGraphAgent:
         print("[Init] Loading Knowledge Graph data...")
         self.kb_out, self.kb_in, self.all_nodes, self.relations, self.alias_map = self._load_data(kb_path, relation_path)
         self.allowed_relations = set(self.relations)
-        self.allowed_rel_tokens = set(self.relations) | {f"{r}^-1" for r in self.relations}
+        self.allowed_rel_tokens = set(self.relations)
 
         # 建立 entity → normalized 的快速查詢索引
         self._node_index = build_node_index(self.all_nodes, self.alias_map)

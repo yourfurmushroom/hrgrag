@@ -250,15 +250,21 @@ def build_model_specs():
                 shared_group=f"HRG-Proposed-{tag}",
                 base_kwargs={
                     **llm_device_kwargs,
+                    "num_candidates": 8,
                     "use_grammar_rerank": True,
                     "use_grammar_expansion": True,
                     "use_fallback_correction": True,
                     "use_deterministic_valid_chain_fallback": True,
                     "use_valid_chain_llm_rerank": True,
+                    "valid_chain_fallback_topk": 12,
+                    "valid_chain_fallback_beam_width": 48,
+                    "valid_chain_fallback_branch": 16,
                     "use_grammar_hint": False,
                     "expansion_strict": True,
-                    "expansion_min_prob": 0.005,
-                    "expansion_per_node_cap": 5,
+                    "expansion_min_prob": 2.0,
+                    "expansion_per_node_cap": 4,
+                    "min_grammar_score_for_expansion": 2.0,
+                    "max_spine_edges_for_expansion": 80,
                 },
             )
         )
@@ -329,6 +335,38 @@ SEM = asyncio.Semaphore(1)
 # ==========================================
 # 2. 工具函式
 # ==========================================
+
+def apply_dataset_agent_overrides(args, model_name: str, agent_class, agent_kwargs: dict) -> dict:
+    """
+    Low-risk dataset-specific tuning.
+
+    Goal:
+    - Keep the method definition unchanged.
+    - Only enlarge search budgets on datasets where current bottlenecks are
+      candidate discovery and KG-valid fallback coverage.
+    """
+    tuned = dict(agent_kwargs)
+    if agent_class is not KnowledgeGraphAgent:
+        return tuned
+
+    if args.dataset == "mlpq":
+        # Multilingual KG needs broader chain exploration and fallback search.
+        tuned["num_candidates"] = max(int(tuned.get("num_candidates", 5) or 5), 8)
+        tuned["valid_chain_fallback_topk"] = max(int(tuned.get("valid_chain_fallback_topk", 8) or 8), 12)
+        tuned["valid_chain_fallback_beam_width"] = max(int(tuned.get("valid_chain_fallback_beam_width", 24) or 24), 40)
+        tuned["valid_chain_fallback_branch"] = max(int(tuned.get("valid_chain_fallback_branch", 12) or 12), 16)
+        tuned["per_entity_cap"] = max(int(tuned.get("per_entity_cap", 500) or 500), 700)
+
+    elif args.dataset == "kqapro":
+        # KQAPro currently fails mostly at no_candidates / no_valid_chain.
+        tuned["num_candidates"] = max(int(tuned.get("num_candidates", 5) or 5), 10)
+        tuned["valid_chain_fallback_topk"] = max(int(tuned.get("valid_chain_fallback_topk", 8) or 8), 16)
+        tuned["valid_chain_fallback_beam_width"] = max(int(tuned.get("valid_chain_fallback_beam_width", 24) or 24), 64)
+        tuned["valid_chain_fallback_branch"] = max(int(tuned.get("valid_chain_fallback_branch", 12) or 12), 20)
+        tuned["per_entity_cap"] = max(int(tuned.get("per_entity_cap", 500) or 500), 800)
+        tuned["max_frontier"] = max(int(tuned.get("max_frontier", 20000) or 20000), 30000)
+
+    return tuned
 
 def save_full_report(full_report: dict, output_file: str) -> None:
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
@@ -795,7 +833,7 @@ def calculate_evidence_metrics(details, metadata):
     recall = (overlap / len(gold_edge_set)) if gold_edge_set else 0.0
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
 
-    selected_chain = [normalize_kb_token(rel[:-3] if rel.endswith("^-1") else rel) for rel in (details.get("selected_chain") or [])]
+    selected_chain = [normalize_kb_token(rel) for rel in (details.get("selected_chain") or [])]
     citation_correctness = 1.0 if selected_chain and selected_chain == gold_chain else 0.0
 
     return {
@@ -1294,7 +1332,8 @@ async def main():
         agent_instance = None
         try:
             print(f"[System] Initializing {run_model_name} with class {agent_class.__name__}.")
-            init_kwargs = dict(agent_kwargs)
+            tuned_agent_kwargs = apply_dataset_agent_overrides(args, name, agent_class, agent_kwargs)
+            init_kwargs = dict(tuned_agent_kwargs)
             init_kwargs.pop("shared_retrieval_group", None)
             init_kwargs["kb_path"] = common_kb_path
             init_kwargs["relation_path"] = common_relation_path
@@ -1306,7 +1345,7 @@ async def main():
                 name,
                 run_model_name,
                 agent_instance,
-                agent_kwargs,
+                tuned_agent_kwargs,
                 dataset_splits=dataset_splits,
                 hop_overrides=hop_overrides,
                 benchmark_dataset_name=args.dataset,
