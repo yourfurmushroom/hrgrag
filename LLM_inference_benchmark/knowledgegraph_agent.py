@@ -6,13 +6,19 @@ import pickle
 import time
 import random
 import hashlib
-from collections import defaultdict
-from typing import Tuple, List, Optional, Dict, Any, Set
+from collections import Counter, defaultdict
+from typing import Tuple, List, Optional, Dict, Any, Set, DefaultDict
 
 from pathlib import Path
 
 from agent_factory import build_llm_strategy
-from dataset_utils import build_node_index, load_kb_adjacency, load_relation_list, normalize_lookup_key
+from dataset_utils import (
+    build_node_index,
+    load_alias_mapping,
+    load_kb_adjacency,
+    load_relation_list,
+    normalize_lookup_key,
+)
 
 
 # ============================================================
@@ -33,35 +39,113 @@ class HRGMatcher:
 
         self._sorted_rules: List[Dict[str, Any]] = []
         for rule in self.grammar:
-            rule["_cached_labels"] = set(self._extract_labels(rule))
+            terminal_edges = self._extract_terminal_edges(rule)
+            labels = [rel for _, rel, _ in terminal_edges if rel]
+            rule["_cached_terminal_edges"] = terminal_edges
+            rule["_cached_labels"] = set(labels)
+            rule["_cached_label_counts"] = Counter(labels)
+            rule["_cached_terminal_count"] = len(labels)
 
     def _extract_labels(self, rule: Dict[str, Any]) -> List[str]:
+        return [rel for _, rel, _ in self._extract_terminal_edges(rule) if rel]
+
+    def _extract_terminal_edges(self, rule: Dict[str, Any]) -> List[Tuple[Any, str, Any]]:
         rhs = rule.get("rhs", {})
-        labels = []
+        edges: List[Tuple[Any, str, Any]] = []
         if "terminal_edges" in rhs:
             for t in rhs["terminal_edges"]:
-                labels.append(t.get("label"))
+                rel = t.get("rel") or t.get("label")
+                src = t.get("a", t.get("src", t.get("source", t.get("head"))))
+                dst = t.get("b", t.get("dst", t.get("target", t.get("tail"))))
+                if rel:
+                    edges.append((src, rel, dst))
         elif "terminals" in rhs:
             for t in rhs["terminals"]:
-                labels.append(t.get("rel"))
-        return [l for l in labels if l]
+                rel = t.get("rel") or t.get("label")
+                src = t.get("a", t.get("src", t.get("source", t.get("head"))))
+                dst = t.get("b", t.get("dst", t.get("target", t.get("tail"))))
+                if rel:
+                    edges.append((src, rel, dst))
+        return edges
 
     def _chain_to_bare(self, chain: List[str]) -> List[str]:
         return list(chain)
 
-    def match_rules(self, chain: List[str]) -> List[Dict[str, Any]]:
+    def _labels_contain_chain(self, rule: Dict[str, Any], chain: List[str]) -> bool:
+        counts = rule.get("_cached_label_counts")
+        if counts is None:
+            counts = Counter(self._extract_labels(rule))
+            rule["_cached_label_counts"] = counts
+        chain_counts = Counter(self._chain_to_bare(chain))
+        return all(counts.get(rel, 0) >= need for rel, need in chain_counts.items())
+
+    def _rule_contains_ordered_path(self, rule: Dict[str, Any], chain: List[str]) -> bool:
+        bare_chain = self._chain_to_bare(chain)
+        if not bare_chain:
+            return False
+
+        terminal_edges = rule.get("_cached_terminal_edges")
+        if terminal_edges is None:
+            terminal_edges = self._extract_terminal_edges(rule)
+            rule["_cached_terminal_edges"] = terminal_edges
+
+        if len(bare_chain) == 1:
+            return any(rel == bare_chain[0] for _, rel, _ in terminal_edges)
+
+        adjacency: DefaultDict[Any, List[Tuple[str, Any]]] = defaultdict(list)
+        for src, rel, dst in terminal_edges:
+            if src is None or dst is None or not rel:
+                continue
+            adjacency[src].append((rel, dst))
+            adjacency[dst].append((rel, src))
+
+        if not adjacency:
+            return False
+
+        states = set(adjacency)
+        for rel in bare_chain:
+            next_states = set()
+            for node in states:
+                for edge_rel, other in adjacency.get(node, []):
+                    if edge_rel == rel:
+                        next_states.add(other)
+            if not next_states:
+                return False
+            states = next_states
+        return True
+
+    def match_rules(
+        self,
+        chain: List[str],
+        require_ordered_path: bool = False,
+        require_exact_size: bool = False,
+    ) -> List[Dict[str, Any]]:
         if not chain:
             return []
-        bare_chain = set(self._chain_to_bare(chain))
         matched = []
 
         for rule in self.grammar:
-            labels = rule.get("_cached_labels", set())
-            if bare_chain.issubset(labels):
+            terminal_count = int(rule.get("_cached_terminal_count", 0) or 0)
+            if require_exact_size and terminal_count != len(chain):
+                continue
+            if require_ordered_path:
+                if self._rule_contains_ordered_path(rule, chain):
+                    matched.append(rule)
+            elif self._labels_contain_chain(rule, chain):
                 matched.append(rule)
 
-        matched.sort(key=lambda r: r.get("probability", r.get("count", 0)), reverse=True)
-        print(f"[HRGMatcher] chain={chain} -> labels={bare_chain} -> matched {len(matched)} rules")
+        matched.sort(
+            key=lambda r: (
+                r.get("probability", r.get("count", 0)),
+                -abs(int(r.get("_cached_terminal_count", 0) or 0) - len(chain)),
+                -int(r.get("_cached_terminal_count", 0) or 0),
+            ),
+            reverse=True,
+        )
+        mode = "ordered" if require_ordered_path else "label"
+        if require_exact_size:
+            mode += "+exact"
+        print(f"[HRGMatcher] chain={chain} -> mode={mode} -> matched {len(matched)} rules")
         return matched
 
     def summarize_matched(self, rules: List[Dict[str, Any]]) -> str:
@@ -108,6 +192,8 @@ class HRGMatcher:
 # ============================================================
 
 class KnowledgeGraphAgent:
+    STATEMENT_RELATION_SUFFIX = "::statement"
+
     def __init__(
         self,
         model_id: str = "openai/gpt-oss-20b",
@@ -151,6 +237,16 @@ class KnowledgeGraphAgent:
         valid_chain_fallback_branch: int = 12,
         valid_chain_fallback_max_depth: int = 3,
         use_valid_chain_llm_rerank: bool = True,
+        # ---- Guide-style HRG prior: label-subset matching, not exact HRG decoding ----
+        require_ordered_grammar_match: bool = False,
+        require_exact_grammar_match_for_expansion: bool = False,
+        max_expansion_edges: Optional[int] = None,
+        max_expansion_edge_ratio: Optional[float] = None,
+        max_total_context_edges: Optional[int] = None,
+        use_low_confidence_valid_chain_fallback: bool = False,
+        low_confidence_min_valid_candidates: int = 2,
+        subgraph_support_saturation: int = 12,
+        alias_path: Optional[str] = None,
     ):
         print(f"[Init] Loading LLM strategy for: {model_id} ...")
         self.llm = build_llm_strategy(
@@ -188,6 +284,14 @@ class KnowledgeGraphAgent:
         self.valid_chain_fallback_branch = valid_chain_fallback_branch
         self.valid_chain_fallback_max_depth = valid_chain_fallback_max_depth
         self.use_valid_chain_llm_rerank = use_valid_chain_llm_rerank
+        self.require_ordered_grammar_match = require_ordered_grammar_match
+        self.require_exact_grammar_match_for_expansion = require_exact_grammar_match_for_expansion
+        self.max_expansion_edges = max_expansion_edges
+        self.max_expansion_edge_ratio = max_expansion_edge_ratio
+        self.max_total_context_edges = max_total_context_edges
+        self.use_low_confidence_valid_chain_fallback = use_low_confidence_valid_chain_fallback
+        self.low_confidence_min_valid_candidates = low_confidence_min_valid_candidates
+        self.subgraph_support_saturation = subgraph_support_saturation
 
         # ===== Metrics =====
         self.hit_grammar_count = 0
@@ -212,6 +316,7 @@ class KnowledgeGraphAgent:
         self.max_kb_triples = max_kb_triples
         self.max_frontier = max_frontier
         self.per_entity_cap = per_entity_cap
+        self.alias_path = alias_path
 
         print("[Init] Loading KB + building adjacency index...")
         self.kb_out, self.kb_in, self.all_nodes, derived_relations, self.alias_map = load_kb_adjacency(
@@ -219,9 +324,12 @@ class KnowledgeGraphAgent:
             max_triples=self.max_kb_triples,
             sanitize_entity_fn=self._sanitize_entity,
         )
+        self.extra_entity_aliases, self.relation_aliases = load_alias_mapping(alias_path)
+        self._merge_entity_aliases(self.extra_entity_aliases)
         self.relations = self._load_relations(relation_path, derived_relations)
         self.allowed_rel_set = set(self.relations)
         self.allowed_rel_tokens = set(self.relations)
+        self.relation_alias_index = self._build_relation_alias_index()
         self._node_index = build_node_index(self.all_nodes, self.alias_map)
         self.relation_frequency = self._compute_relation_frequency()
 
@@ -244,6 +352,32 @@ class KnowledgeGraphAgent:
         text = text.replace("[", "").replace("]", "")
         text = re.sub(r"\s+", "_", text)
         return text
+
+    def _merge_entity_aliases(self, extra_aliases: Dict[str, Set[str]]) -> None:
+        for canonical, aliases in (extra_aliases or {}).items():
+            node = self._sanitize_entity(canonical)
+            if not node:
+                continue
+            self.alias_map.setdefault(node, set()).update(
+                alias for alias in aliases if alias and self._sanitize_entity(alias) != node
+            )
+
+    def _build_relation_alias_index(self) -> Dict[str, str]:
+        index: Dict[str, str] = {}
+
+        def add(alias: str, relation: str) -> None:
+            normalized = self._normalize_match_text(alias)
+            if normalized:
+                index.setdefault(normalized, relation)
+                index.setdefault(normalized.replace(" ", "_"), relation)
+                index.setdefault(normalized.replace(" ", ""), relation)
+
+        for rel in self.allowed_rel_tokens:
+            add(rel, rel)
+            add(rel.replace("_", " "), rel)
+            for alias in self.relation_aliases.get(rel, set()):
+                add(alias, rel)
+        return index
 
     def _safe_int(self, value: Any, default: int = 0) -> int:
         try:
@@ -432,6 +566,12 @@ class KnowledgeGraphAgent:
             tnorm = tok.lower().replace(" ", "_")
             if tnorm == norm:
                 return tok
+        alias_key = self._normalize_match_text(raw)
+        if alias_key in self.relation_alias_index:
+            return self.relation_alias_index[alias_key]
+        compact_alias_key = alias_key.replace(" ", "")
+        if compact_alias_key in self.relation_alias_index:
+            return self.relation_alias_index[compact_alias_key]
         return None
 
     def _normalize_entity_from_question(self, user_prompt: str, entity: Optional[str]) -> Optional[str]:
@@ -468,6 +608,27 @@ class KnowledgeGraphAgent:
         text = re.sub(r"[^\w\s]", " ", text)
         return re.sub(r"\s+", " ", text).strip()
 
+    def _relation_match_text(self, rel_token: str) -> str:
+        aliases = sorted(self.relation_aliases.get(rel_token, set()))
+        return " ".join([rel_token, rel_token.replace("_", " "), *aliases])
+
+    def _relation_alias_guide(self, relations: List[str], max_aliases: int = 5) -> str:
+        guide: Dict[str, List[str]] = {}
+        for rel in relations:
+            aliases = [
+                alias for alias in sorted(self.relation_aliases.get(rel, set()))
+                if self._normalize_match_text(alias) != self._normalize_match_text(rel)
+            ]
+            if aliases:
+                guide[rel] = aliases[:max_aliases]
+        if not guide:
+            return ""
+        return (
+            "\n[Relation Alias Guide]\n"
+            "When a question uses an alias or translation, output the KG relation token on the left.\n"
+            f"{json.dumps(guide, ensure_ascii=False)}\n"
+        )
+
     def _select_relation_prompt_candidates(self, user_prompt: str, limit: int = 64) -> List[str]:
         if len(self.allowed_rel_tokens) <= limit:
             return sorted(self.allowed_rel_tokens)
@@ -480,9 +641,12 @@ class KnowledgeGraphAgent:
             scored.append((40, rel))
 
         for rel in sorted(self.allowed_rel_tokens):
-            rel_terms = set(self._normalize_match_text(rel).split())
+            rel_terms = set(self._normalize_match_text(self._relation_match_text(rel)).split())
             overlap = len(question_terms & rel_terms)
             score = overlap * 10
+            rel_text = self._normalize_match_text(self._relation_match_text(rel))
+            if any(len(term) >= 3 and term in rel_text for term in question_terms):
+                score += 6
             if score > 0:
                 scored.append((score, rel))
 
@@ -590,6 +754,7 @@ class KnowledgeGraphAgent:
 
         allowed_rel_candidates = self._select_relation_prompt_candidates(user_prompt)
         allowed_rels_str = json.dumps(allowed_rel_candidates, ensure_ascii=False)
+        relation_alias_guide = self._relation_alias_guide(allowed_rel_candidates)
 
         rel_semantics = (
             "\n[Relation Direction Guide]\n"
@@ -632,6 +797,7 @@ class KnowledgeGraphAgent:
             "  3. confidence: a float in [0, 1] for how plausible the chain is\n"
             "Rules:\n"
             f"  - Prefer relations from this candidate set: {allowed_rels_str}\n"
+            "  - If the alias guide maps an English/French/Chinese phrase to a KG token, output the KG token.\n"
             "  - If needed, you may use another KG relation token only when clearly more accurate.\n"
             "  - Use only bare relation names.\n"
             "  - 1-hop question -> 1 relation, 2-hop question -> 2 relations, 3-hop question -> 3 relations.\n"
@@ -639,6 +805,7 @@ class KnowledgeGraphAgent:
             "  - Return multiple diverse candidates ranked from most likely to less likely.\n"
             "  - Do NOT use markdown fences or explanations.\n"
             f"{rel_semantics}"
+            f"{relation_alias_guide}"
             f"{grammar_hint_section}"
             f"{few_shot}\n"
             "[Output]\n"
@@ -712,10 +879,33 @@ class KnowledgeGraphAgent:
 
         return edges
 
-    def _check_chain_validity(self, entity: str, chain: List[str]) -> Dict[str, Any]:
+    def _statement_aware_chain_variants(self, chain: List[str]) -> List[List[str]]:
         """
-        Returns whether the chain is executable from the entity in the KB.
+        Qualifier-bearing KQAPro facts are reached through statement nodes.
+
+        The parser will often emit the ordinary fact predicate followed by the
+        qualifier predicate. Try the predicate-specific statement anchor before
+        rejecting that otherwise meaningful chain.
         """
+        variants = [list(chain)]
+        seen = {tuple(chain)}
+
+        for idx, rel in enumerate(chain[:-1]):
+            if rel.endswith(self.STATEMENT_RELATION_SUFFIX):
+                continue
+            statement_rel = f"{rel}{self.STATEMENT_RELATION_SUFFIX}"
+            if statement_rel not in self.allowed_rel_tokens:
+                continue
+            variant = list(chain)
+            variant[idx] = statement_rel
+            key = tuple(variant)
+            if key not in seen:
+                seen.add(key)
+                variants.append(variant)
+
+        return variants
+
+    def _check_chain_validity_exact(self, entity: str, chain: List[str]) -> Dict[str, Any]:
         start_entity = self._resolve_entity_to_kb(entity)
         if not start_entity or not chain:
             return {
@@ -753,6 +943,37 @@ class KnowledgeGraphAgent:
             "step_sizes": step_sizes,
             "final_size": len(frontier),
             "failed_hop": None,
+        }
+
+    def _check_chain_validity(self, entity: str, chain: List[str]) -> Dict[str, Any]:
+        """
+        Returns whether the chain is executable from the entity in the KB.
+        """
+        best_result = None
+        best_progress = (-1, -1, -1)
+
+        for variant in self._statement_aware_chain_variants(chain):
+            result = self._check_chain_validity_exact(entity, variant)
+            result["resolved_chain"] = variant
+            if result["valid"]:
+                return result
+
+            step_sizes = result.get("step_sizes", [])
+            progress = (
+                self._safe_int(result.get("failed_hop"), 0),
+                len(step_sizes),
+                sum(self._safe_int(size, 0) for size in step_sizes),
+            )
+            if progress > best_progress:
+                best_result = result
+                best_progress = progress
+
+        return best_result or {
+            "valid": False,
+            "step_sizes": [],
+            "final_size": 0,
+            "failed_hop": 0,
+            "resolved_chain": list(chain),
         }
 
     def _find_subgraph_multi_hop_kb_strict(self, start_entity: str, relation_chain: List[str]) -> List[Dict[str, Any]]:
@@ -876,36 +1097,62 @@ class KnowledgeGraphAgent:
         print(f"[HRG-D] Retrieved {len(result)} edges via grammar-guided BFS.", flush=True)
         return result
 
+    def _empty_grammar_features(self) -> Dict[str, Any]:
+        return {
+            "score": 0.0,
+            "hit": 0,
+            "same_arity_hit": 0,
+            "ordered_path_hit": 0,
+            "weak_label_match": 0,
+            "matched_count": 0,
+        }
+
+    def _rule_terminal_count(self, rule: Dict[str, Any]) -> int:
+        return self._safe_int(rule.get("_cached_terminal_count", 0), 0)
+
     def _get_grammar_match_features(self, chain: List[str]) -> Dict[str, Any]:
         if not self.hrg or not chain:
-            return {
-                "score": 0.0,
-                "hit": 0,
-                "same_arity_hit": 0,
-                "matched_count": 0,
-            }
-        matched = self.hrg.match_rules(chain)
-        if not matched:
-            return {
-                "score": 0.0,
-                "hit": 0,
-                "same_arity_hit": 0,
-                "matched_count": 0,
-            }
+            return self._empty_grammar_features()
 
-        same_arity_rules = []
-        for rule in matched:
-            lhs = rule.get("lhs", {})
-            arity = lhs.get("rank", rule.get("arity", -1)) if isinstance(lhs, dict) else rule.get("arity", -1)
-            if arity == len(chain):
-                same_arity_rules.append(rule)
+        label_rules = self.hrg.match_rules(chain)
+        exact_label_rules = self.hrg.match_rules(
+            chain,
+            require_exact_size=True,
+        )
+        exact_ordered_rules = self.hrg.match_rules(
+            chain,
+            require_ordered_path=True,
+            require_exact_size=True,
+        )
+        ordered_rules = exact_ordered_rules or self.hrg.match_rules(
+            chain,
+            require_ordered_path=True,
+        )
 
-        preferred = same_arity_rules[0] if same_arity_rules else matched[0]
+        if not label_rules:
+            return self._empty_grammar_features()
+
+        if self.require_ordered_grammar_match and not ordered_rules:
+            features = self._empty_grammar_features()
+            features["weak_label_match"] = 1
+            features["matched_count"] = len(label_rules)
+            return features
+
+        if self.require_ordered_grammar_match:
+            preferred_rules = exact_ordered_rules or ordered_rules
+            same_arity_hit = 1 if exact_ordered_rules else 0
+        else:
+            preferred_rules = exact_label_rules or label_rules
+            same_arity_hit = 1 if exact_label_rules else 0
+
+        preferred = preferred_rules[0]
         return {
             "score": float(preferred.get("probability", preferred.get("count", 0))),
             "hit": 1,
-            "same_arity_hit": 1 if same_arity_rules else 0,
-            "matched_count": len(matched),
+            "same_arity_hit": same_arity_hit,
+            "ordered_path_hit": 1 if ordered_rules else 0,
+            "weak_label_match": 1,
+            "matched_count": len(preferred_rules),
         }
 
     def _select_matched_rules(
@@ -913,6 +1160,8 @@ class KnowledgeGraphAgent:
         chain: List[str],
         top_k: Optional[int] = None,
         require_same_arity: bool = True,
+        require_ordered_path: Optional[bool] = None,
+        require_exact_size: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Select the most relevant HRG rules for a predicted relation chain.
@@ -924,7 +1173,14 @@ class KnowledgeGraphAgent:
         if not self.hrg or not chain:
             return []
 
-        matched_rules = self.hrg.match_rules(chain)
+        if require_ordered_path is None:
+            require_ordered_path = self.require_ordered_grammar_match
+
+        matched_rules = self.hrg.match_rules(
+            chain,
+            require_ordered_path=require_ordered_path,
+            require_exact_size=require_exact_size,
+        )
         if not matched_rules:
             return []
 
@@ -932,17 +1188,38 @@ class KnowledgeGraphAgent:
             top_k = self.topk_expansion_rules
 
         if require_same_arity:
-            chain_len = len(chain)
-            filtered = []
-            for rule in matched_rules:
-                lhs = rule.get("lhs", {})
-                arity = lhs.get("rank", rule.get("arity", -1)) if isinstance(lhs, dict) else rule.get("arity", -1)
-                if arity == chain_len:
-                    filtered.append(rule)
-            if filtered:
-                matched_rules = filtered
+            exact_rules = [
+                rule for rule in matched_rules
+                if self._rule_terminal_count(rule) == len(chain)
+            ]
+            if exact_rules:
+                matched_rules = exact_rules
 
         return matched_rules[:top_k]
+
+    def _apply_expansion_budget(
+        self,
+        spine_edges: List[Dict[str, Any]],
+        expanded_edges: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if not expanded_edges:
+            return []
+
+        budget = len(expanded_edges)
+        if self.max_expansion_edges is not None:
+            budget = min(budget, max(0, int(self.max_expansion_edges)))
+        if self.max_expansion_edge_ratio is not None:
+            ratio = max(0.0, float(self.max_expansion_edge_ratio))
+            ratio_budget = int(len(spine_edges) * ratio)
+            if ratio > 0 and spine_edges:
+                ratio_budget = max(1, ratio_budget)
+            budget = min(budget, ratio_budget)
+        if self.max_total_context_edges is not None:
+            budget = min(budget, max(0, int(self.max_total_context_edges) - len(spine_edges)))
+
+        if budget <= 0:
+            return []
+        return expanded_edges[:budget]
 
     def _expand_subgraph_by_grammar(
         self,
@@ -967,8 +1244,7 @@ class KnowledgeGraphAgent:
             chain_len = len(chain)
             filtered = []
             for r in best_rules:
-                lhs = r.get("lhs", {})
-                arity = lhs.get("rank", r.get("arity", -1)) if isinstance(lhs, dict) else r.get("arity", -1)
+                arity = self._rule_terminal_count(r)
                 prob = r.get("probability", r.get("count", 0))
                 if arity == chain_len and prob >= self.expansion_min_prob:
                     filtered.append(r)
@@ -1225,9 +1501,10 @@ class KnowledgeGraphAgent:
         preferred_bare_rels: Set[str],
         edge_count: int,
     ) -> float:
-        rel_terms = set(self._normalize_match_text(rel_token).split())
+        rel_match_text = self._normalize_match_text(self._relation_match_text(rel_token))
+        rel_terms = set(rel_match_text.split())
         overlap = len(question_terms & rel_terms)
-        contains = sum(1 for term in question_terms if len(term) >= 3 and term in self._normalize_match_text(rel_token))
+        contains = sum(1 for term in question_terms if len(term) >= 3 and term in rel_match_text)
         preferred_bonus = 4.0 if rel_token in preferred_bare_rels else 0.0
         return overlap * 8.0 + contains * 2.0 + preferred_bonus + min(edge_count, 10) * 0.1
 
@@ -1328,11 +1605,14 @@ class KnowledgeGraphAgent:
                 )
                 for rel_score, rel_token, next_frontier in options:
                     new_chain = chain + [rel_token]
-                    grammar_features = self._get_grammar_match_features(new_chain) if self.use_grammar_rerank else {
-                        "score": 0.0, "hit": 0, "same_arity_hit": 0, "matched_count": 0
-                    }
+                    grammar_features = (
+                        self._get_grammar_match_features(new_chain)
+                        if self.use_grammar_rerank
+                        else self._empty_grammar_features()
+                    )
                     grammar_bonus = (
                         self._safe_int(grammar_features.get("same_arity_hit", 0), 0) * 5.0
+                        + self._safe_int(grammar_features.get("ordered_path_hit", 0), 0) * 3.0
                         + self._safe_int(grammar_features.get("hit", 0), 0) * 2.0
                         + min(self._safe_int(grammar_features.get("matched_count", 0), 0), 20) * 0.1
                         + self._safe_float(grammar_features.get("score", 0.0), 0.0)
@@ -1519,6 +1799,7 @@ class KnowledgeGraphAgent:
 
         grammar_hit = self._safe_int(grammar_features.get("hit", 0), 0)
         same_arity_hit = self._safe_int(grammar_features.get("same_arity_hit", 0), 0)
+        ordered_path_hit = self._safe_int(grammar_features.get("ordered_path_hit", 0), 0)
         grammar_score = self._safe_float(grammar_features.get("score", 0.0), 0.0)
         grammar_matched_count = min(self._safe_int(grammar_features.get("matched_count", 0), 0), 20)
         step_survival = sum(min(self._safe_int(s, 0), 10) for s in step_sizes)
@@ -1542,6 +1823,7 @@ class KnowledgeGraphAgent:
             valid,
             self._safe_float(llm_rerank_score, 0.0),
             same_arity_hit,
+            ordered_path_hit,
             grammar_hit,
             grammar_score,
             grammar_matched_count,
@@ -1552,6 +1834,24 @@ class KnowledgeGraphAgent:
             llm_confidence,
             llm_prior,
         )
+
+    def _should_add_low_confidence_fallback(self, ranked_candidates: List[Dict[str, Any]]) -> bool:
+        if not self.use_low_confidence_valid_chain_fallback:
+            return False
+
+        valid_candidates = [c for c in ranked_candidates if c.get("kb_result", {}).get("valid")]
+        if not valid_candidates:
+            return True
+
+        top_valid = max(valid_candidates, key=lambda c: c.get("ranking_key", ()))
+        has_strong_grammar = bool(
+            self._safe_int(top_valid.get("grammar_same_arity_hit", 0), 0)
+            or self._safe_int(top_valid.get("grammar_ordered_path_hit", 0), 0)
+        )
+        if has_strong_grammar:
+            return False
+
+        return len(valid_candidates) < max(1, int(self.low_confidence_min_valid_candidates))
 
     def _build_candidate_subgraph(
         self,
@@ -1575,6 +1875,8 @@ class KnowledgeGraphAgent:
                 "spine_edges": [],
                 "expanded_edges": [],
                 "final_edges": [],
+                "retrieval_policy": "none",
+                "expansion_gate": "no_spine_edges",
                 "retrieval_recall": 0.0,
                 "retrieval_precision": 0.0,
                 "retrieval_f1": 0.0,
@@ -1590,6 +1892,7 @@ class KnowledgeGraphAgent:
                 selected_rules[0].get("probability", selected_rules[0].get("count", 0)),
                 0.0,
             )
+        expansion_gate = "disabled"
         allow_grammar_expansion = (
             bool(selected_rules)
             and top_rule_score >= self.min_grammar_score_for_expansion
@@ -1598,21 +1901,54 @@ class KnowledgeGraphAgent:
                 or len(spine_edges) <= self.max_spine_edges_for_expansion
             )
         )
+        if not selected_rules:
+            expansion_gate = (
+                "no_ordered_grammar_match"
+                if self.require_ordered_grammar_match
+                else "no_grammar_label_subset_match"
+            )
+        elif self.require_exact_grammar_match_for_expansion and self._rule_terminal_count(selected_rules[0]) != len(chain):
+            expansion_gate = "no_exact_grammar_match"
+            allow_grammar_expansion = False
+        elif top_rule_score < self.min_grammar_score_for_expansion:
+            expansion_gate = "grammar_score_below_min"
+        elif self.max_spine_edges_for_expansion is not None and len(spine_edges) > self.max_spine_edges_for_expansion:
+            expansion_gate = "spine_too_large"
+        elif allow_grammar_expansion:
+            expansion_gate = "allowed"
+
         if not self.use_grammar_guided_retrieval and self.hrg and self.use_grammar_expansion and not is_single_hop:
             matched_rules = selected_rules
             if allow_grammar_expansion:
                 expanded_edges = self._expand_subgraph_by_grammar(spine_edges, matched_rules, chain=chain)
+                expanded_edges = self._apply_expansion_budget(spine_edges, expanded_edges)
+                if not expanded_edges:
+                    expansion_gate = "budget_zero_or_no_new_edges"
         elif self.use_frequency_expansion and not is_single_hop:
             expanded_edges = self._expand_subgraph_by_relation_frequency(spine_edges)
+            expanded_edges = self._apply_expansion_budget(spine_edges, expanded_edges)
         elif self.use_random_expansion and not is_single_hop:
             expanded_edges = self._expand_subgraph_random(spine_edges, chain=chain)
+            expanded_edges = self._apply_expansion_budget(spine_edges, expanded_edges)
         elif is_single_hop:
             matched_rules = selected_rules
+            expansion_gate = "single_hop_spine_floor"
 
         final_edges = spine_edges + expanded_edges
         if self.top_k_edges is not None and len(final_edges) > self.top_k_edges:
-            final_edges = sorted(final_edges, key=lambda e: e.get("count", 0), reverse=True)
-            final_edges = final_edges[: self.top_k_edges]
+            spine_budget = max(0, int(self.top_k_edges))
+            kept_spine_edges = spine_edges[:spine_budget]
+            remaining_budget = max(0, spine_budget - len(kept_spine_edges))
+            kept_expanded_edges = sorted(
+                expanded_edges,
+                key=lambda e: e.get("count", 0),
+                reverse=True,
+            )[:remaining_budget]
+            spine_edges = kept_spine_edges
+            expanded_edges = kept_expanded_edges
+            final_edges = spine_edges + expanded_edges
+
+        retrieval_policy = "hrg_expanded" if expanded_edges else "spine_floor"
 
         retrieval_recall = 0.0
         retrieval_precision = 0.0
@@ -1626,6 +1962,8 @@ class KnowledgeGraphAgent:
             "spine_edges": spine_edges,
             "expanded_edges": expanded_edges,
             "final_edges": final_edges,
+            "retrieval_policy": retrieval_policy,
+            "expansion_gate": expansion_gate,
             "retrieval_recall": retrieval_recall,
             "retrieval_precision": retrieval_precision,
             "retrieval_f1": retrieval_f1,
@@ -1642,20 +1980,25 @@ class KnowledgeGraphAgent:
         grammar_hit = 1 if subgraph.get("grammar_hit") else 0
         grammar_score = self._safe_float(chain_row.get("grammar_score", 0.0), 0.0)
         same_arity_hit = self._safe_int(chain_row.get("grammar_same_arity_hit", 0), 0)
-        spine_size = min(len(subgraph.get("spine_edges", [])), 10000)
+        ordered_path_hit = self._safe_int(chain_row.get("grammar_ordered_path_hit", 0), 0)
         expanded_size = min(len(subgraph.get("expanded_edges", [])), 10000)
+        support = min(
+            self._safe_int(subgraph.get("subgraph_size", 0), 0),
+            max(1, self._safe_int(self.subgraph_support_saturation, 12)),
+        )
         # Smaller subgraphs are preferred once support quality is comparable.
         compactness = -min(subgraph.get("subgraph_size", 0), 10000)
 
         return (
             has_edges,
             same_arity_hit,
+            ordered_path_hit,
             grammar_hit,
             grammar_score,
-            spine_size,
-            expanded_size,
-            compactness,
             chain_row.get("ranking_key", ()),
+            support,
+            compactness,
+            -expanded_size,
         )
 
     # ============================================================
@@ -1686,6 +2029,8 @@ class KnowledgeGraphAgent:
         selected_candidate: Optional[Dict[str, Any]] = None,
         final_context: Optional[str] = None,
         timing: Optional[Dict[str, Any]] = None,
+        retrieval_policy: Optional[str] = None,
+        expansion_gate: Optional[str] = None,
     ):
         payload = {
             "question": question,
@@ -1709,6 +2054,8 @@ class KnowledgeGraphAgent:
             "selected_candidate": selected_candidate or {},
             "final_context": final_context or "",
             "timing": timing or {},
+            "retrieval_policy": retrieval_policy or "",
+            "expansion_gate": expansion_gate or "",
         }
         with open(save_path, "wb") as f:
             pickle.dump(payload, f)
@@ -1830,9 +2177,12 @@ class KnowledgeGraphAgent:
                 "references": references or [],
                 "spine_edges": [],
                 "expanded_edges": [],
+                "retrieval_policy": "none",
+                "expansion_gate": "no_candidates",
                 "selected_candidate": {},
                 "parse_latency": parse_latency,
                 "retrieval_latency": 0.0,
+                "total_prepare_latency": time.perf_counter() - total_t0,
             }
 
         rank_t0 = time.perf_counter()
@@ -1841,11 +2191,14 @@ class KnowledgeGraphAgent:
 
         for rank_idx, cand in enumerate(candidates):
             entity = cand["entity"]
-            chain = cand["chain"]
-            kb_result = self._check_chain_validity(entity, chain)
-            grammar_features = self._get_grammar_match_features(chain) if self.use_grammar_rerank else {
-                "score": 0.0, "hit": 0, "same_arity_hit": 0, "matched_count": 0
-            }
+            requested_chain = cand["chain"]
+            kb_result = self._check_chain_validity(entity, requested_chain)
+            chain = kb_result.get("resolved_chain", requested_chain)
+            grammar_features = (
+                self._get_grammar_match_features(chain)
+                if self.use_grammar_rerank
+                else self._empty_grammar_features()
+            )
             grammar_score = grammar_features["score"]
             source = cand.get("source", "llm")
             confidence = float(cand.get("confidence", 0.0) or 0.0)
@@ -1856,6 +2209,7 @@ class KnowledgeGraphAgent:
             row = {
                 "entity": entity,
                 "chain": chain,
+                "requested_chain": requested_chain,
                 "source": source,
                 "confidence": confidence,
                 "llm_rank_index": rank_idx,
@@ -1863,7 +2217,10 @@ class KnowledgeGraphAgent:
                 "grammar_score": grammar_score,
                 "grammar_hit": grammar_features["hit"],
                 "grammar_same_arity_hit": grammar_features["same_arity_hit"],
+                "grammar_ordered_path_hit": grammar_features["ordered_path_hit"],
+                "grammar_weak_label_match": grammar_features["weak_label_match"],
                 "grammar_matched_count": grammar_features["matched_count"],
+                "llm_rerank_score": 0.0,
                 "ranking_key": ranking_key,
             }
             ranked_candidates.append(row)
@@ -1891,11 +2248,14 @@ class KnowledgeGraphAgent:
             base_len = len(ranked_candidates)
             for idx, cand in enumerate(correction_pool):
                 entity = cand["entity"]
-                chain = cand["chain"]
-                kb_result = self._check_chain_validity(entity, chain)
-                grammar_features = self._get_grammar_match_features(chain) if self.use_grammar_rerank else {
-                    "score": 0.0, "hit": 0, "same_arity_hit": 0, "matched_count": 0
-                }
+                requested_chain = cand["chain"]
+                kb_result = self._check_chain_validity(entity, requested_chain)
+                chain = kb_result.get("resolved_chain", requested_chain)
+                grammar_features = (
+                    self._get_grammar_match_features(chain)
+                    if self.use_grammar_rerank
+                    else self._empty_grammar_features()
+                )
                 grammar_score = grammar_features["score"]
                 source = cand.get("source", "correction")
                 confidence = float(cand.get("confidence", 0.0) or 0.0)
@@ -1906,6 +2266,7 @@ class KnowledgeGraphAgent:
                 ranked_candidates.append({
                     "entity": entity,
                     "chain": chain,
+                    "requested_chain": requested_chain,
                     "source": source,
                     "confidence": confidence,
                     "llm_rank_index": base_len + idx,
@@ -1913,16 +2274,23 @@ class KnowledgeGraphAgent:
                     "grammar_score": grammar_score,
                     "grammar_hit": grammar_features["hit"],
                     "grammar_same_arity_hit": grammar_features["same_arity_hit"],
+                    "grammar_ordered_path_hit": grammar_features["ordered_path_hit"],
+                    "grammar_weak_label_match": grammar_features["weak_label_match"],
                     "grammar_matched_count": grammar_features["matched_count"],
+                    "llm_rerank_score": 0.0,
                     "ranking_key": ranking_key,
                 })
 
-        if (
+        needs_kg_fallback = (
             self.use_deterministic_valid_chain_fallback
             and ranked_candidates
-            and not any(c["kb_result"]["valid"] for c in ranked_candidates)
-        ):
-            print("[Fallback] No valid corrected chains. Enumerating KG-valid fallback chains...", flush=True)
+            and (
+                not any(c["kb_result"]["valid"] for c in ranked_candidates)
+                or self._should_add_low_confidence_fallback(ranked_candidates)
+            )
+        )
+        if needs_kg_fallback:
+            print("[Fallback] Enumerating KG-valid fallback chains under confidence/budget gate...", flush=True)
             fallback_seed_candidates = list(candidates)
             fallback_seed_candidates.extend({
                 "entity": row["entity"],
@@ -1976,11 +2344,14 @@ class KnowledgeGraphAgent:
             base_len = len(ranked_candidates)
             for idx, cand in enumerate(kg_candidates):
                 entity = cand["entity"]
-                chain = cand["chain"]
-                kb_result = cand.get("kb_result") or self._check_chain_validity(entity, chain)
-                grammar_features = self._get_grammar_match_features(chain) if self.use_grammar_rerank else {
-                    "score": 0.0, "hit": 0, "same_arity_hit": 0, "matched_count": 0
-                }
+                requested_chain = cand["chain"]
+                kb_result = cand.get("kb_result") or self._check_chain_validity(entity, requested_chain)
+                chain = kb_result.get("resolved_chain", requested_chain)
+                grammar_features = (
+                    self._get_grammar_match_features(chain)
+                    if self.use_grammar_rerank
+                    else self._empty_grammar_features()
+                )
                 grammar_score = grammar_features["score"]
                 source = cand.get("source", "kg_valid_fallback")
                 fallback_idx = int(cand.get("_fallback_idx", idx))
@@ -1995,6 +2366,7 @@ class KnowledgeGraphAgent:
                 ranked_candidates.append({
                     "entity": entity,
                     "chain": chain,
+                    "requested_chain": requested_chain,
                     "source": source,
                     "confidence": confidence,
                     "llm_rerank_score": llm_rerank_score,
@@ -2003,6 +2375,8 @@ class KnowledgeGraphAgent:
                     "grammar_score": grammar_score,
                     "grammar_hit": grammar_features["hit"],
                     "grammar_same_arity_hit": grammar_features["same_arity_hit"],
+                    "grammar_ordered_path_hit": grammar_features["ordered_path_hit"],
+                    "grammar_weak_label_match": grammar_features["weak_label_match"],
                     "grammar_matched_count": grammar_features["matched_count"],
                     "ranking_key": ranking_key,
                 })
@@ -2041,9 +2415,12 @@ class KnowledgeGraphAgent:
                 "references": references or [],
                 "spine_edges": [],
                 "expanded_edges": [],
+                "retrieval_policy": "none",
+                "expansion_gate": "no_valid_chain",
                 "selected_candidate": best or {},
                 "parse_latency": parse_latency,
                 "retrieval_latency": retrieval_latency,
+                "total_prepare_latency": time.perf_counter() - total_t0,
             }
 
         retrieval_t0 = time.perf_counter()
@@ -2063,6 +2440,8 @@ class KnowledgeGraphAgent:
                 "edges": subgraph["final_edges"],
                 "spine_edges": subgraph["spine_edges"],
                 "expanded_edges": subgraph["expanded_edges"],
+                "retrieval_policy": subgraph.get("retrieval_policy", "unknown"),
+                "expansion_gate": subgraph.get("expansion_gate", ""),
             })
             subgraph_candidates.append(row)
 
@@ -2083,14 +2462,17 @@ class KnowledgeGraphAgent:
                 "retrieval_precision": 0.0,
                 "retrieval_f1": 0.0,
                 "subgraph_size": 0,
-                "grammar_hit": grammar_hit,
+                "grammar_hit": False,
                 "has_references": bool(references),
                 "references": references or [],
                 "spine_edges": [],
                 "expanded_edges": [],
+                "retrieval_policy": "none",
+                "expansion_gate": "no_edges_after_selection",
                 "selected_candidate": best or {},
                 "parse_latency": parse_latency,
                 "retrieval_latency": retrieval_latency + (time.perf_counter() - retrieval_t0),
+                "total_prepare_latency": time.perf_counter() - total_t0,
             }
 
         subgraph_candidates.sort(key=lambda x: x["subgraph_ranking_key"], reverse=True)
@@ -2098,7 +2480,7 @@ class KnowledgeGraphAgent:
         for i, rc in enumerate(subgraph_candidates[:10]):
             print(
                 f"  [{i}] entity={rc['entity']} chain={rc['chain']} "
-                f"source={rc['source']} edges={len(rc['edges'])} "
+                f"source={rc['source']} policy={rc.get('retrieval_policy')} edges={len(rc['edges'])} "
                 f"rr={rc['retrieval_recall']:.3f} rp={rc['retrieval_precision']:.3f} "
                 f"rf1={rc['retrieval_f1']:.3f} s_key={rc['subgraph_ranking_key']}",
                 flush=True,
@@ -2112,12 +2494,15 @@ class KnowledgeGraphAgent:
         final_edges = chosen["edges"]
         spine_edges = chosen["spine_edges"]
         expanded_edges = chosen["expanded_edges"]
+        retrieval_policy = chosen.get("retrieval_policy", "unknown")
+        expansion_gate = chosen.get("expansion_gate", "")
 
         if matched_rules:
             print(self.hrg.summarize_matched(matched_rules), flush=True)
 
         print(
-            f"[Edges] spine={len(spine_edges)} expanded={len(expanded_edges)} "
+            f"[Edges] policy={retrieval_policy} gate={expansion_gate} "
+            f"spine={len(spine_edges)} expanded={len(expanded_edges)} "
             f"total={len(final_edges)}",
             flush=True
         )
@@ -2154,6 +2539,8 @@ class KnowledgeGraphAgent:
             "references": references or [],
             "spine_edges": spine_edges,
             "expanded_edges": expanded_edges,
+            "retrieval_policy": retrieval_policy,
+            "expansion_gate": expansion_gate,
             "selected_candidate": chosen,
             "parse_latency": parse_latency,
             "retrieval_latency": retrieval_latency + (time.perf_counter() - retrieval_t0),
@@ -2214,6 +2601,8 @@ class KnowledgeGraphAgent:
                             "retrieval_latency": prepared.get("retrieval_latency", 0.0),
                             "generation_latency": 0.0,
                         },
+                        retrieval_policy=prepared.get("retrieval_policy", ""),
+                        expansion_gate=prepared.get("expansion_gate", ""),
                     )
             else:
                 final_edges = prepared.get("edges", [])
@@ -2255,6 +2644,8 @@ class KnowledgeGraphAgent:
                             "retrieval_latency": prepared.get("retrieval_latency", 0.0),
                             "generation_latency": time.perf_counter() - generation_t0,
                         },
+                        retrieval_policy=prepared.get("retrieval_policy", ""),
+                        expansion_gate=prepared.get("expansion_gate", ""),
                     )
         finally:
             self.serialization_format = original_format
@@ -2271,6 +2662,8 @@ class KnowledgeGraphAgent:
             "retrieval_f1": prepared.get("retrieval_f1", 0.0),
             "subgraph_size": prepared.get("subgraph_size", 0),
             "status": prepared.get("status"),
+            "retrieval_policy": prepared.get("retrieval_policy", ""),
+            "expansion_gate": prepared.get("expansion_gate", ""),
             "generation_failed": not bool((answer or "").strip()) and prepared.get("status") == "ok",
             "generation_latency": time.perf_counter() - generation_t0,
         }

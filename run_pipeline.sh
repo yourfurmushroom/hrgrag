@@ -40,7 +40,7 @@ else
   SPLIT="test"
 fi
 RUN_GRAMMAR="${RUN_GRAMMAR:-1}"
-SAMPLE_LIMIT="${SAMPLE_LIMIT:-100}"
+SAMPLE_LIMIT="${SAMPLE_LIMIT:-200}"
 MODEL_FILTER="${MODEL_FILTER:-}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
 TARGET_DEVICE="${TARGET_DEVICE:-cuda:0,cuda:1}"
@@ -138,7 +138,14 @@ fi
 if [[ -z "${KB_PATH:-}" ]]; then
   case "$DATASET" in
     metaqa) KB_PATH="$DEFAULT_METAQA_ROOT/kb.txt" ;;
-    wikimovies) KB_PATH="$DEFAULT_WIKIMOVIES_ROOT/movieqa/knowledge_source/wiki_entities/wiki_entities_kb.txt" ;;
+    wikimovies)
+      WIKIMOVIES_KB_DIR="$DEFAULT_WIKIMOVIES_ROOT/movieqa/knowledge_source/wiki_entities"
+      if [[ -f "$WIKIMOVIES_KB_DIR/wiki_entities_kb_normalized.txt" ]]; then
+        KB_PATH="$WIKIMOVIES_KB_DIR/wiki_entities_kb_normalized.txt"
+      else
+        KB_PATH="$WIKIMOVIES_KB_DIR/wiki_entities_kb.txt"
+      fi
+      ;;
     mlpq)
       if [[ "${MLPQ_KB_MODE,,}" == "monolingual" ]]; then
         mono_lang="${MLPQ_KB_LANG,,}"
@@ -200,6 +207,11 @@ BENCHMARK_ARGS=(
 if [[ -n "${RELATION_PATH:-}" ]]; then
   require_file "$RELATION_PATH" "RELATION_PATH"
   BENCHMARK_ARGS+=(--relation-path "$RELATION_PATH")
+fi
+
+if [[ -n "${ALIAS_PATH:-}" ]]; then
+  require_file "$ALIAS_PATH" "ALIAS_PATH"
+  BENCHMARK_ARGS+=(--alias-path "$ALIAS_PATH")
 fi
 
 if [[ -n "$MODEL_FILTER" ]]; then

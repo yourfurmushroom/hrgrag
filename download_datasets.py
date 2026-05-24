@@ -44,6 +44,21 @@ MINTAKA_URLS = {
     "test": "https://raw.githubusercontent.com/amazon-science/mintaka/main/data/mintaka_test.json",
 }
 KQAPRO_TRIPLES_FILENAME = "kqapro_kb_triples.tsv"
+KQAPRO_STATEMENT_RELATION_SUFFIX = "::statement"
+
+KQAPRO_QUALIFIER_FUNCTIONS = {
+    "QFilterDate",
+    "QFilterNum",
+    "QFilterStr",
+    "QFilterYear",
+    "QueryAttrQualifier",
+    "QueryRelationQualifier",
+    "QueryAttrUnderCondition",
+}
+KQAPRO_COMPARISON_FUNCTIONS = {
+    "SelectAmong",
+    "SelectBetween",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -180,8 +195,74 @@ def normalize_kqapro_layout(dest: Path) -> None:
         flatten_single_child_dir(snapshot_dir)
 
 
+def wikimovies_source_kb_path(root: Path) -> Path:
+    return root / "movieqa" / "knowledge_source" / "wiki_entities" / "wiki_entities_kb.txt"
+
+
+def wikimovies_normalized_kb_path(root: Path) -> Path:
+    return root / "movieqa" / "knowledge_source" / "wiki_entities" / "wiki_entities_kb_normalized.txt"
+
+
+def ensure_wikimovies_normalized_kb(root: Path) -> Optional[Path]:
+    source_kb = wikimovies_source_kb_path(root)
+    normalized_kb = wikimovies_normalized_kb_path(root)
+    if not source_kb.exists():
+        return None
+
+    from normalize_wikimovies_kb import SAFE_MULTI_VALUE_RELATIONS, normalize_wikimovies_kb
+
+    stats = normalize_wikimovies_kb(
+        input_path=str(source_kb),
+        output_path=str(normalized_kb),
+        split_relations=set(SAFE_MULTI_VALUE_RELATIONS),
+    )
+    print(f"[WikiMovies] normalized KB -> {normalized_kb} | {stats}")
+    return normalized_kb
+
+
 def sanitize_relation_name(name: Any) -> str:
     return str(name or "").strip().replace("\t", " ").replace("\n", " ")
+
+
+def kqapro_program_functions(program: Any) -> List[str]:
+    if not isinstance(program, list):
+        return []
+    return [
+        str(step.get("function", "")).strip()
+        for step in program
+        if isinstance(step, dict) and str(step.get("function", "")).strip()
+    ]
+
+
+def classify_kqapro_program(program: Any) -> str:
+    functions = kqapro_program_functions(program)
+    if any(fn in KQAPRO_QUALIFIER_FUNCTIONS for fn in functions):
+        return "qualifier"
+    if "Count" in functions:
+        return "count"
+    if any(fn.startswith("Verify") for fn in functions):
+        return "verify"
+    if any(fn in KQAPRO_COMPARISON_FUNCTIONS for fn in functions):
+        return "comparison"
+    if "QueryRelation" in functions:
+        return "relation_query"
+    if any(fn.startswith("QueryAttr") for fn in functions):
+        return "attribute"
+    return "relation_path"
+
+
+def estimate_kqapro_graph_hop(program: Any) -> int:
+    functions = kqapro_program_functions(program)
+    raw_hop = max(1, min(3, len(functions) // 3 or 1))
+    if any(fn in KQAPRO_QUALIFIER_FUNCTIONS for fn in functions):
+        # TSV conversion reifies qualifier-bearing facts as statement nodes.
+        raw_hop = max(raw_hop, 2)
+    return raw_hop
+
+
+def kqapro_statement_relation(predicate: Any) -> str:
+    predicate_text = sanitize_relation_name(predicate)
+    return f"{predicate_text}{KQAPRO_STATEMENT_RELATION_SUFFIX}" if predicate_text else ""
 
 
 def stringify_kqapro_value(value: Any) -> str:
@@ -242,6 +323,7 @@ def write_kqapro_triples(kb_json_path: Path, out_path: Path) -> int:
                 if qualifiers:
                     stmt_id = f"stmt_attr_{entity_id}_{attr_idx}_{stmt_idx}"
                     stmt_idx += 1
+                    emit(out_f, entity_id, kqapro_statement_relation(predicate), stmt_id)
                     emit(out_f, stmt_id, "fact_h", entity_id)
                     emit(out_f, stmt_id, "fact_r", predicate)
                     emit(out_f, stmt_id, "fact_t", value_text)
@@ -263,6 +345,7 @@ def write_kqapro_triples(kb_json_path: Path, out_path: Path) -> int:
                 if qualifiers:
                     stmt_id = f"stmt_rel_{entity_id}_{rel_idx}_{stmt_idx}"
                     stmt_idx += 1
+                    emit(out_f, head, kqapro_statement_relation(predicate), stmt_id)
                     emit(out_f, stmt_id, "fact_h", head)
                     emit(out_f, stmt_id, "fact_r", predicate)
                     emit(out_f, stmt_id, "fact_t", tail)
@@ -358,11 +441,13 @@ def download_wikimovies(out_root: Path, force: bool) -> Dict[str, Any]:
     dest = out_root / "WikiMovies"
     maybe_reset_dir(dest, force)
     if dest.exists() and (dest / "movieqa").exists():
+        ensure_wikimovies_normalized_kb(dest)
         return {"dataset": "WikiMovies", "status": "skipped", "path": str(dest)}
 
     local_source = LOCAL_DATASETS_FALLBACK / "WikiMovies"
     if copy_local_dataset_if_available(local_source, dest, required=[Path("movieqa")]):
         flatten_single_child_dir(dest)
+        ensure_wikimovies_normalized_kb(dest)
         write_json(dest / "_download_meta.json", {"dataset": "WikiMovies", "source": str(local_source), "path": str(dest), "mode": "local-copy"})
         return {"dataset": "WikiMovies", "status": "copied_local", "path": str(dest)}
 
@@ -380,6 +465,7 @@ def download_wikimovies(out_root: Path, force: bool) -> Dict[str, Any]:
         movieqa_dir = candidates[0]
         shutil.copytree(movieqa_dir, dest / "movieqa", dirs_exist_ok=True)
     flatten_single_child_dir(dest)
+    ensure_wikimovies_normalized_kb(dest)
 
     write_json(
         dest / "_download_meta.json",
@@ -527,6 +613,17 @@ def download_cwq_direct(out_root: Path, force: bool) -> Dict[str, Any]:
     return {"dataset": "CWQ", "status": "downloaded", "path": str(out_dir)}
 
 
+def refresh_kqapro_normalized_files(raw_dir: Path, normalized_dir: Path) -> int:
+    refreshed = 0
+    if not raw_dir.exists():
+        return refreshed
+    ensure_dir(normalized_dir)
+    for raw_path in sorted(raw_dir.glob("*.jsonl")):
+        write_jsonl(normalized_dir / raw_path.name, [normalize_kqapro(row) for row in iter_jsonl(raw_path)])
+        refreshed += 1
+    return refreshed
+
+
 def download_kqapro_direct(out_root: Path, repo_id: str, force: bool) -> Dict[str, Any]:
     out_dir = out_root / "KQAPro"
     maybe_reset_dir(out_dir, force)
@@ -535,9 +632,16 @@ def download_kqapro_direct(out_root: Path, repo_id: str, force: bool) -> Dict[st
     snapshot_dir = out_dir / "hf_snapshot"
     triples_path = out_dir / KQAPRO_TRIPLES_FILENAME
     if normalized_dir.exists() and any(normalized_dir.iterdir()):
-        if not triples_path.exists() and (snapshot_dir / "kb.json").exists():
+        refreshed_normalized = refresh_kqapro_normalized_files(raw_dir, normalized_dir)
+        if (snapshot_dir / "kb.json").exists():
             write_kqapro_triples(snapshot_dir / "kb.json", triples_path)
-        return {"dataset": "KQAPro", "status": "skipped", "path": str(out_dir)}
+        return {
+            "dataset": "KQAPro",
+            "status": "skipped",
+            "path": str(out_dir),
+            "refreshed_normalized_splits": refreshed_normalized,
+            "kb_triples_path": str(triples_path) if triples_path.exists() else "",
+        }
 
     snapshot_hf_repo(repo_id, snapshot_dir, force)
     ensure_dir(normalized_dir)
@@ -642,14 +746,15 @@ def normalize_kqapro(row: Dict[str, Any]) -> Dict[str, Any]:
     else:
         answers = [raw_answer]
     program = row.get("program", [])
-    hop = 2
-    if isinstance(program, list):
-        hop = max(1, min(3, len(program) // 3 or 1))
+    functions = kqapro_program_functions(program)
     return {
         "question": row.get("question", ""),
         "answers": unique_keep_order(answers),
-        "hop": hop,
+        "hop": estimate_kqapro_graph_hop(program),
         "source_dataset": "kqapro",
+        "query_family": classify_kqapro_program(program),
+        "program_functions": functions,
+        "program_length": len(functions),
     }
 
 

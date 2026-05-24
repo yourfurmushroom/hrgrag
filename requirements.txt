@@ -1,6 +1,6 @@
 # PyTorch is installed by setup_env.sh so the CUDA build can be selected there.
 setuptools<82
-transformers @ git+https://github.com/huggingface/transformers.git
+transformers @ git+https://github.com/huggingface/transformers.git@v5.7.0
 accelerate>=0.33
 nltk>=3.9
 pandas>=2.2

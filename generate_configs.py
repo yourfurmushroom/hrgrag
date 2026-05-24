@@ -44,13 +44,16 @@ def infer_jobs(datasets_dir: Path) -> List[Dict[str, str]]:
 
     wikimovies_root = datasets_dir / "WikiMovies"
     if wikimovies_root.exists():
+        wikimovies_kb_dir = wikimovies_root / "movieqa" / "knowledge_source" / "wiki_entities"
+        wikimovies_normalized_kb = wikimovies_kb_dir / "wiki_entities_kb_normalized.txt"
+        wikimovies_raw_kb = wikimovies_kb_dir / "wiki_entities_kb.txt"
         jobs.append(
             {
                 "name": "wikimovies",
                 "dataset": "wikimovies",
                 "split": "test",
                 "dataset_root": str(wikimovies_root),
-                "kb_path": str(wikimovies_root / "movieqa" / "knowledge_source" / "wiki_entities" / "wiki_entities_kb.txt"),
+                "kb_path": str(wikimovies_normalized_kb if wikimovies_normalized_kb.exists() else wikimovies_raw_kb),
                 "relation_path": "",
                 "extra": "WIKIMOVIES_SUBSET=wiki_entities\nRUN_GRAMMAR=1\n",
             }
@@ -69,6 +72,7 @@ def infer_jobs(datasets_dir: Path) -> List[Dict[str, str]]:
                 ),
                 "relation_path": "",
                 "extra": "MLPQ_PAIR=en-zh\nMLPQ_QUESTION_LANG=en\nMLPQ_FUSION=ills\nRUN_GRAMMAR=1\n",
+                "alias_path": str(ROOT_DIR / "configs" / "mlpq_aliases.json"),
             }
         )
 
@@ -123,6 +127,7 @@ def build_config_text(job: Dict[str, str]) -> str:
     dataset_root = job.get("dataset_root", "")
     dataset_file = job.get("dataset_file", "")
     relation_path = job.get("relation_path", "")
+    alias_path = job.get("alias_path", "")
 
     if dataset_root:
         lines.append(f"DATASET_ROOT={dataset_root}")
@@ -140,9 +145,10 @@ def build_config_text(job: Dict[str, str]) -> str:
             "CUSTOM_FORMAT=jsonl",
             "CUSTOM_HOP=1",
             f"RELATION_PATH={maybe_comment_missing(relation_path) if relation_path else ''}",
+            f"ALIAS_PATH={maybe_comment_missing(alias_path) if alias_path else ''}",
             "GRAMMAR_PATH=",
             "RUN_GRAMMAR=1",
-            "SAMPLE_LIMIT=100",
+            "SAMPLE_LIMIT=200",
             "MODEL_FILTER=",
             "OUTPUT_FILE=",
             "DETAIL_CSV=",

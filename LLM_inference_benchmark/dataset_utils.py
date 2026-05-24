@@ -5,7 +5,7 @@ import re
 import unicodedata
 from collections import defaultdict
 from pathlib import Path
-from typing import Callable, DefaultDict, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Callable, DefaultDict, Dict, Iterable, List, Optional, Set, Tuple
 
 
 FREEBASE_NS_PREFIXES = (
@@ -160,6 +160,72 @@ def load_relation_list(
 
     rels = sorted({r for _, r, _ in iter_kb_triples(kb_path, max_triples=max_triples)})
     return rels
+
+
+def _coerce_alias_values(value: Any) -> Set[str]:
+    aliases: Set[str] = set()
+    if value is None:
+        return aliases
+    if isinstance(value, str):
+        if value.strip():
+            aliases.add(value.strip())
+        return aliases
+    if isinstance(value, dict):
+        for key in ("canonical", "label", "name"):
+            item = value.get(key)
+            if isinstance(item, str) and item.strip():
+                aliases.add(item.strip())
+        for key in ("aliases", "alias", "labels", "surface_forms", "translations"):
+            aliases.update(_coerce_alias_values(value.get(key)))
+        return aliases
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            aliases.update(_coerce_alias_values(item))
+    return aliases
+
+
+def load_alias_mapping(alias_path: Optional[str]) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]]]:
+    """
+    Load optional entity/relation aliases.
+
+    Supported JSON shape:
+    {
+      "entities": {"Canonical_Node": ["alias", ...]},
+      "relations": {"kg_relation_token": ["alias", ...]}
+    }
+
+    Canonical keys are normalized with normalize_kb_token so callers can use
+    either full DBpedia URIs or the already-normalized KG tokens.
+    """
+    if not alias_path:
+        return {}, {}
+    path = Path(alias_path)
+    if not path.exists():
+        return {}, {}
+
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    entity_aliases: Dict[str, Set[str]] = defaultdict(set)
+    relation_aliases: Dict[str, Set[str]] = defaultdict(set)
+
+    for section_name, target in (
+        ("entities", entity_aliases),
+        ("relations", relation_aliases),
+    ):
+        raw_section = data.get(section_name, {}) if isinstance(data, dict) else {}
+        if not isinstance(raw_section, dict):
+            continue
+        for raw_canonical, raw_aliases in raw_section.items():
+            canonical = normalize_kb_token(str(raw_canonical))
+            if not canonical:
+                continue
+            aliases = _coerce_alias_values(raw_aliases)
+            aliases.add(str(raw_canonical))
+            aliases.discard("")
+            target[canonical].update(aliases)
+
+    return dict(entity_aliases), dict(relation_aliases)
 
 
 def build_node_index(nodes: Iterable[str], alias_map: Optional[Dict[str, Set[str]]] = None) -> Dict[str, str]:
@@ -439,8 +505,8 @@ def load_custom_dataset(
 def load_normalized_jsonl_dataset(
     file_path: str,
     default_hop: int = 1,
-) -> Dict[str, List[Tuple[str, List[str]]]]:
-    grouped: Dict[str, List[Tuple[str, List[str]]]] = defaultdict(list)
+) -> Dict[str, List[Tuple[str, List[str], Dict[str, Any]]]]:
+    grouped: Dict[str, List[Tuple[str, List[str], Dict[str, Any]]]] = defaultdict(list)
     path = Path(file_path)
     if not path.exists():
         return {}
@@ -475,6 +541,12 @@ def load_normalized_jsonl_dataset(
                 hop = default_hop
 
             if question and answers:
-                grouped[f"{hop}-hop"].append((question, answers))
+                metadata = {
+                    key: value
+                    for key, value in record.items()
+                    if key not in {"question", "answers"}
+                }
+                metadata["hop"] = hop
+                grouped[f"{hop}-hop"].append((question, answers, metadata))
 
     return dict(grouped)

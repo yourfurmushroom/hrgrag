@@ -13,10 +13,13 @@ DATASETS_DIR = ROOT_DIR / "Datasets"
 
 FIXED_KB_PATHS: Dict[str, Path] = {
     "metaqa": DATASETS_DIR / "MetaQA" / "kb.txt",
-    "wikimovies": DATASETS_DIR / "WikiMovies" / "movieqa" / "knowledge_source" / "wiki_entities" / "wiki_entities_kb.txt",
     "mlpq": DATASETS_DIR / "MLPQ" / "datasets" / "KGs" / "fusion_bilingual_KGs" / "ILLs_fusion" / "merged_ILLs_KG_en_zh.txt",
     "kqapro": DATASETS_DIR / "KQAPro" / "kqapro_kb_triples.tsv",
 }
+WIKIMOVIES_KB_PATHS = [
+    DATASETS_DIR / "WikiMovies" / "movieqa" / "knowledge_source" / "wiki_entities" / "wiki_entities_kb_normalized.txt",
+    DATASETS_DIR / "WikiMovies" / "movieqa" / "knowledge_source" / "wiki_entities" / "wiki_entities_kb.txt",
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,6 +62,16 @@ def find_best(root: Path, patterns: List[str], suffixes: tuple[str, ...] = (".tx
 
 
 def resolve_known(dataset: str, base: Path, dataset_root: Optional[Path]) -> Optional[Path]:
+    if dataset == "wikimovies":
+        if dataset_root:
+            local_kb_dir = dataset_root / "movieqa" / "knowledge_source" / "wiki_entities"
+            local_match = first_existing([
+                local_kb_dir / "wiki_entities_kb_normalized.txt",
+                local_kb_dir / "wiki_entities_kb.txt",
+            ])
+            if local_match:
+                return local_match
+        return first_existing(WIKIMOVIES_KB_PATHS)
     if dataset in FIXED_KB_PATHS:
         fixed = FIXED_KB_PATHS[dataset]
         return fixed if fixed.exists() else None

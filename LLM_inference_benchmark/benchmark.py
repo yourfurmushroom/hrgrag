@@ -29,10 +29,21 @@ PROJECT_ROOT = str(Path(__file__).resolve().parents[1])
 DEFAULT_METAQA_ROOT = os.path.join(PROJECT_ROOT, "Datasets", "MetaQA")
 DEFAULT_WIKIMOVIES_ROOT = os.path.join(PROJECT_ROOT, "Datasets", "WikiMovies")
 DEFAULT_MLPQ_ROOT = os.path.join(PROJECT_ROOT, "Datasets", "MLPQ")
+DEFAULT_MLPQ_ALIAS_PATH = os.path.join(PROJECT_ROOT, "configs", "mlpq_aliases.json")
 DEFAULT_WQSP_ROOT = os.path.join(PROJECT_ROOT, "Datasets", "WQSP")
 DEFAULT_CWQ_ROOT = os.path.join(PROJECT_ROOT, "Datasets", "CWQ")
 DEFAULT_KQAPRO_ROOT = os.path.join(PROJECT_ROOT, "Datasets", "KQAPro")
 DEFAULT_MINTAKA_ROOT = os.path.join(PROJECT_ROOT, "Datasets", "Mintaka")
+
+
+def default_wikimovies_kb_path(subset: str) -> str:
+    kb_root = os.path.join(PROJECT_ROOT, "Datasets", "WikiMovies", "movieqa", "knowledge_source")
+    if subset != "wiki_entities":
+        return os.path.join(kb_root, "full", "full_kb.txt")
+
+    normalized = os.path.join(kb_root, "wiki_entities", "wiki_entities_kb_normalized.txt")
+    raw = os.path.join(kb_root, "wiki_entities", "wiki_entities_kb.txt")
+    return normalized if os.path.exists(normalized) else raw
 ARTIFACTS_ROOT = os.path.join(PROJECT_ROOT, "artifacts")
 DEFAULT_QA_DUMP_ROOT = os.path.join(ARTIFACTS_ROOT, "shared", "qa_dataset_dump")
 
@@ -189,59 +200,59 @@ def build_model_specs():
             )
         )
 
-        specs.extend(
-            paired_serialization_specs(
-                base_name=f"Spine-GrammarExpansion-{tag}",
-                model_id=model_id,
-                shared_group=f"Spine-GrammarExpansion-{tag}",
-                base_kwargs={
-                    **llm_device_kwargs,
-                    "use_grammar_rerank": True,
-                    "use_grammar_expansion": True,
-                    "use_fallback_correction": False,
-                    "use_grammar_hint": False,
-                    "expansion_strict": True,
-                    "expansion_min_prob": 0.005,
-                    "expansion_per_node_cap": 5,
-                },
-            )
-        )
+        # specs.extend(
+        #     paired_serialization_specs(
+        #         base_name=f"Spine-GrammarExpansion-{tag}",
+        #         model_id=model_id,
+        #         shared_group=f"Spine-GrammarExpansion-{tag}",
+        #         base_kwargs={
+        #             **llm_device_kwargs,
+        #             "use_grammar_rerank": True,
+        #             "use_grammar_expansion": True,
+        #             "use_fallback_correction": False,
+        #             "use_grammar_hint": False,
+        #             "expansion_strict": True,
+        #             "expansion_min_prob": 0.005,
+        #             "expansion_per_node_cap": 5,
+        #         },
+        #     )
+        # )
 
-        specs.extend(
-            paired_serialization_specs(
-                base_name=f"Spine-RandomExpansion-{tag}",
-                model_id=model_id,
-                shared_group=f"Spine-RandomExpansion-{tag}",
-                base_kwargs={
-                    **llm_device_kwargs,
-                    "use_grammar_rerank": False,
-                    "use_grammar_expansion": False,
-                    "use_random_expansion": True,
-                    "use_fallback_correction": False,
-                    "use_grammar_hint": False,
-                    "expansion_per_node_cap": 5,
-                    "grammar_path": None,
-                },
-            )
-        )
+        # specs.extend(
+        #     paired_serialization_specs(
+        #         base_name=f"Spine-RandomExpansion-{tag}",
+        #         model_id=model_id,
+        #         shared_group=f"Spine-RandomExpansion-{tag}",
+        #         base_kwargs={
+        #             **llm_device_kwargs,
+        #             "use_grammar_rerank": False,
+        #             "use_grammar_expansion": False,
+        #             "use_random_expansion": True,
+        #             "use_fallback_correction": False,
+        #             "use_grammar_hint": False,
+        #             "expansion_per_node_cap": 5,
+        #             "grammar_path": None,
+        #         },
+        #     )
+        # )
 
-        specs.extend(
-            paired_serialization_specs(
-                base_name=f"Spine-FrequencyExpansion-{tag}",
-                model_id=model_id,
-                shared_group=f"Spine-FrequencyExpansion-{tag}",
-                base_kwargs={
-                    **llm_device_kwargs,
-                    "use_grammar_rerank": False,
-                    "use_grammar_expansion": False,
-                    "use_frequency_expansion": True,
-                    "use_fallback_correction": False,
-                    "use_grammar_hint": False,
-                    "expansion_per_node_cap": 5,
-                    "grammar_path": None,
-                },
-            )
-        )
+        # specs.extend(
+        #     paired_serialization_specs(
+        #         base_name=f"Spine-FrequencyExpansion-{tag}",
+        #         model_id=model_id,
+        #         shared_group=f"Spine-FrequencyExpansion-{tag}",
+        #         base_kwargs={
+        #             **llm_device_kwargs,
+        #             "use_grammar_rerank": False,
+        #             "use_grammar_expansion": False,
+        #             "use_frequency_expansion": True,
+        #             "use_fallback_correction": False,
+        #             "use_grammar_hint": False,
+        #             "expansion_per_node_cap": 5,
+        #             "grammar_path": None,
+        #         },
+        #     )
+        # )
 
         specs.extend(
             paired_serialization_specs(
@@ -265,6 +276,14 @@ def build_model_specs():
                     "expansion_per_node_cap": 4,
                     "min_grammar_score_for_expansion": 2.0,
                     "max_spine_edges_for_expansion": 80,
+                    "require_ordered_grammar_match": False,
+                    "require_exact_grammar_match_for_expansion": False,
+                    "max_expansion_edges": 48,
+                    "max_expansion_edge_ratio": 0.5,
+                    "max_total_context_edges": 160,
+                    "use_low_confidence_valid_chain_fallback": False,
+                    "low_confidence_min_valid_candidates": 2,
+                    "subgraph_support_saturation": 12,
                 },
             )
         )
@@ -279,7 +298,7 @@ MODEL_SPECS = build_model_specs()
 
 
 
-TEST_SAMPLE_LIMIT = 100
+TEST_SAMPLE_LIMIT = 200
 OUTPUT_FILE = os.path.join(ARTIFACTS_ROOT, "shared", "benchmark_results.json")
 
 DETAIL_DIR = os.path.join(ARTIFACTS_ROOT, "shared", "benchmark_details_csv")
@@ -356,6 +375,9 @@ def apply_dataset_agent_overrides(args, model_name: str, agent_class, agent_kwar
         tuned["valid_chain_fallback_beam_width"] = max(int(tuned.get("valid_chain_fallback_beam_width", 24) or 24), 40)
         tuned["valid_chain_fallback_branch"] = max(int(tuned.get("valid_chain_fallback_branch", 12) or 12), 16)
         tuned["per_entity_cap"] = max(int(tuned.get("per_entity_cap", 500) or 500), 700)
+        tuned["max_total_context_edges"] = max(int(tuned.get("max_total_context_edges", 160) or 160), 220)
+        tuned["max_expansion_edge_ratio"] = max(float(tuned.get("max_expansion_edge_ratio", 0.5) or 0.5), 0.75)
+        tuned["low_confidence_min_valid_candidates"] = max(int(tuned.get("low_confidence_min_valid_candidates", 2) or 2), 3)
 
     elif args.dataset == "kqapro":
         # KQAPro currently fails mostly at no_candidates / no_valid_chain.
@@ -365,6 +387,9 @@ def apply_dataset_agent_overrides(args, model_name: str, agent_class, agent_kwar
         tuned["valid_chain_fallback_branch"] = max(int(tuned.get("valid_chain_fallback_branch", 12) or 12), 20)
         tuned["per_entity_cap"] = max(int(tuned.get("per_entity_cap", 500) or 500), 800)
         tuned["max_frontier"] = max(int(tuned.get("max_frontier", 20000) or 20000), 30000)
+        tuned["max_total_context_edges"] = max(int(tuned.get("max_total_context_edges", 160) or 160), 240)
+        tuned["max_expansion_edge_ratio"] = max(float(tuned.get("max_expansion_edge_ratio", 0.5) or 0.5), 0.75)
+        tuned["low_confidence_min_valid_candidates"] = max(int(tuned.get("low_confidence_min_valid_candidates", 2) or 2), 3)
 
     return tuned
 
@@ -411,6 +436,7 @@ def parse_args():
     parser.add_argument("--sample-limit", type=int, default=TEST_SAMPLE_LIMIT)
     parser.add_argument("--kb-path", default=None)
     parser.add_argument("--relation-path", default=None)
+    parser.add_argument("--alias-path", default=None)
     parser.add_argument("--grammar-path", default=None)
     parser.add_argument("--artifacts-root", default=ARTIFACTS_ROOT)
     parser.add_argument("--output-file", default=OUTPUT_FILE)
@@ -948,9 +974,12 @@ async def async_evaluate_question(
                     "failure_stage": prepared.get("status", "ok"),
                     "parse_latency": prepared.get("parse_latency", 0.0),
                     "retrieval_latency": prepared.get("retrieval_latency", 0.0),
+                    "total_prepare_latency": prepared.get("total_prepare_latency", 0.0),
                     "generation_latency": answer_bundle.get("generation_latency", answer_bundle.get("elapsed", 0.0)),
                     "generation_failed": answer_bundle.get("generation_failed", False),
                     "answerable": bool((response or "").strip()),
+                    "retrieval_policy": prepared.get("retrieval_policy", ""),
+                    "expansion_gate": prepared.get("expansion_gate", ""),
                     "edges": prepared.get("edges", []),
                     "candidates": prepared.get("candidates", []),
                     "spine_edges": prepared.get("spine_edges", []),
@@ -994,9 +1023,12 @@ async def async_evaluate_question(
                 "failure_stage": (details or {}).get("failure_stage", "ok"),
                 "parse_latency": float((details or {}).get("parse_latency", 0.0) or 0.0),
                 "retrieval_latency": float((details or {}).get("retrieval_latency", 0.0) or 0.0),
+                "total_prepare_latency": float((details or {}).get("total_prepare_latency", 0.0) or 0.0),
                 "generation_latency": float((details or {}).get("generation_latency", 0.0) or 0.0),
                 "generation_failed": bool((details or {}).get("generation_failed", False)),
                 "answerable": bool((details or {}).get("answerable", bool((response or "").strip()))),
+                "retrieval_policy": (details or {}).get("retrieval_policy", ""),
+                "expansion_gate": (details or {}).get("expansion_gate", ""),
             }
 
             return {
@@ -1013,9 +1045,12 @@ async def async_evaluate_question(
                 "failure_stage": payload["failure_stage"],
                 "parse_latency": payload["parse_latency"],
                 "retrieval_latency": payload["retrieval_latency"],
+                "total_prepare_latency": payload["total_prepare_latency"],
                 "generation_latency": payload["generation_latency"],
                 "generation_failed": payload["generation_failed"],
                 "answerable": payload["answerable"],
+                "retrieval_policy": payload["retrieval_policy"],
+                "expansion_gate": payload["expansion_gate"],
             }
 
         except Exception as e:
@@ -1039,9 +1074,12 @@ async def async_evaluate_question(
                     "failure_stage": failure_stage,
                     "parse_latency": 0.0,
                     "retrieval_latency": 0.0,
+                    "total_prepare_latency": 0.0,
                     "generation_latency": 0.0,
                     "generation_failed": True,
                     "answerable": False,
+                    "retrieval_policy": "",
+                    "expansion_gate": "",
                 }, ensure_ascii=False),
                 **{key: 0.0 for key in ANSWER_METRIC_KEYS},
                 **{key: 0.0 for key in RETRIEVAL_RANK_METRIC_KEYS},
@@ -1052,9 +1090,12 @@ async def async_evaluate_question(
                 "failure_stage": failure_stage,
                 "parse_latency": 0.0,
                 "retrieval_latency": 0.0,
+                "total_prepare_latency": 0.0,
                 "generation_latency": 0.0,
                 "generation_failed": True,
                 "answerable": False,
+                "retrieval_policy": "",
+                "expansion_gate": "",
             }
 
 
@@ -1276,11 +1317,7 @@ async def main():
         os.path.join(PROJECT_ROOT, "Datasets", "MetaQA", "kb.txt")
         if args.dataset == "metaqa"
         else (
-            (
-                os.path.join(PROJECT_ROOT, "Datasets", "WikiMovies", "movieqa", "knowledge_source", "wiki_entities", "wiki_entities_kb_normalized.txt")
-                if args.wikimovies_subset == "wiki_entities"
-                else os.path.join(PROJECT_ROOT, "Datasets", "WikiMovies", "movieqa", "knowledge_source", "full", "full_kb.txt")
-            )
+            default_wikimovies_kb_path(args.wikimovies_subset)
             if args.dataset == "wikimovies"
             else (
                 resolve_mlpq_kb_path(
@@ -1299,6 +1336,11 @@ async def main():
     common_relation_path = args.relation_path or (
         os.path.join(PROJECT_ROOT, "Datasets", "MetaQA", "relations.json")
         if args.dataset == "metaqa"
+        else None
+    )
+    common_alias_path = args.alias_path or (
+        DEFAULT_MLPQ_ALIAS_PATH
+        if args.dataset == "mlpq" and os.path.exists(DEFAULT_MLPQ_ALIAS_PATH)
         else None
     )
     common_grammar_path = resolve_default_grammar_path(args, run_tag)
@@ -1333,6 +1375,9 @@ async def main():
         try:
             print(f"[System] Initializing {run_model_name} with class {agent_class.__name__}.")
             tuned_agent_kwargs = apply_dataset_agent_overrides(args, name, agent_class, agent_kwargs)
+            if agent_class is KnowledgeGraphAgent and common_alias_path:
+                tuned_agent_kwargs = dict(tuned_agent_kwargs)
+                tuned_agent_kwargs["alias_path"] = common_alias_path
             init_kwargs = dict(tuned_agent_kwargs)
             init_kwargs.pop("shared_retrieval_group", None)
             init_kwargs["kb_path"] = common_kb_path
