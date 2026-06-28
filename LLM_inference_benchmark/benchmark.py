@@ -8,6 +8,7 @@ import pickle
 import time
 import gc
 import math
+import traceback
 import torch
 import pandas as pd
 import sys
@@ -65,25 +66,75 @@ def load_local_dotenv(env_path: str) -> None:
 load_local_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN")
 if HF_TOKEN:
-    login(token=HF_TOKEN, add_to_git_credential=False)
+    try:
+        login(token=HF_TOKEN, add_to_git_credential=False)
+    except Exception as e:
+        print(f"[Warning] Hugging Face login skipped: {e}")
 
 # Hop count 對應 BFS 深度（用於 baseline 及 Mode-C)
 HOP_TO_DEPTH = {"1-hop": 1, "2-hop": 2, "3-hop": 3}
+EXPERIMENT_SUITE = os.getenv("EXPERIMENT_SUITE", "core").strip().lower()
+
+
+def suite_enabled(*names: str) -> bool:
+    enabled = {name.strip().lower() for name in names}
+    return EXPERIMENT_SUITE in {"all", "full"} or EXPERIMENT_SUITE in enabled
+
+
+def parse_int_list_env(name: str, default: str) -> list[int]:
+    raw = os.getenv(name, default)
+    out: list[int] = []
+    for part in re.split(r"[,\s]+", raw.strip()):
+        if not part:
+            continue
+        out.append(int(part))
+    return out
+
+
+def int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    return int(raw) if raw not in {None, ""} else default
+
+
+def float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    return float(raw) if raw not in {None, ""} else default
+
+
+def bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw in {None, ""}:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def sharded_backbone_target_device(tag: str, default: str) -> str:
+    env_key = f"{re.sub(r'[^A-Za-z0-9]+', '_', tag).upper()}_TARGET_DEVICE"
+    return os.getenv(env_key, os.getenv("SHARDED_TARGET_DEVICE", default))
+
+
+def sharded_backbone_bool(tag: str, name: str, default: bool) -> bool:
+    tag_key = f"{re.sub(r'[^A-Za-z0-9]+', '_', tag).upper()}_{name}"
+    raw = os.getenv(tag_key, os.getenv(f"SHARDED_{name}"))
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
 
 MODEL_BACKBONES = [
-    # {
-    #     "tag": "gpt-oss",
-    #     "model_id": "openai/gpt-oss-20b",
-    #     "use_model_sharding": True,
-    #     "strict_gpu_sharding": True,
-    #     "target_device": "cuda:0,cuda:1",
-    # },
+    {
+        "tag": "gpt-oss",
+        "model_id": "openai/gpt-oss-20b",
+        "use_model_sharding": True,
+        "strict_gpu_sharding": sharded_backbone_bool("gpt-oss", "STRICT_GPU_SHARDING", True),
+        "target_device": sharded_backbone_target_device("gpt-oss", "cuda:0,cuda:1"),
+    },
     # {
     #     "tag": "qwen3.5",
     #     "model_id": "Qwen/Qwen3.5-35B-A3B-FP8",
     #     "use_model_sharding": True,
-    #     "strict_gpu_sharding": True,
-    #     "target_device": "cuda:0,cuda:1",
+    #     "strict_gpu_sharding": sharded_backbone_bool("qwen3.5", "STRICT_GPU_SHARDING", True),
+    #     "target_device": sharded_backbone_target_device("qwen3.5", "cuda:0,cuda:1"),
     # },
     {
        "tag": "llama3.1",
@@ -148,6 +199,13 @@ def single_agent_specs(
 
 def build_model_specs():
     specs = []
+    include_full_suite = suite_enabled("full", "all")
+    include_legacy_expansion_specs = include_full_suite or os.getenv("ENABLE_LEGACY_EXPANSION_SPECS", "0") == "1"
+    include_new_ablation_specs = include_full_suite or os.getenv("ENABLE_NEW_ABLATION_SPECS", "0") == "1"
+    include_ngram_specs = include_full_suite or os.getenv("ENABLE_RELATION_NGRAM_SPECS", "0") == "1"
+    include_bfs_cap_specs = include_full_suite or os.getenv("ENABLE_BFS_CAP_SPECS", "0") == "1"
+    bfs_caps = parse_int_list_env("BFS_DEGREE_CAPS", "50 100 200 500")
+    bfs_token_budgets = parse_int_list_env("BFS_CONTEXT_TOKEN_BUDGETS", "200 500 1000")
     for backbone in MODEL_BACKBONES:
         tag = backbone["tag"]
         model_id = backbone["model_id"]
@@ -167,6 +225,39 @@ def build_model_specs():
                 is_baseline=True,
             )
         )
+
+        if include_bfs_cap_specs:
+            for cap in bfs_caps:
+                specs.extend(
+                    single_agent_specs(
+                        base_name=f"Degree-Capped-BFS-{cap}-{tag}",
+                        model_id=model_id,
+                        shared_group=f"Degree-Capped-BFS-{cap}-{tag}",
+                        base_kwargs={
+                            "bfs_depth": 3,
+                            "max_edges_per_hop": cap,
+                            **llm_device_kwargs,
+                        },
+                        agent_class=BaselineAgent,
+                        is_baseline=True,
+                    )
+                )
+
+            for budget in bfs_token_budgets:
+                specs.extend(
+                    single_agent_specs(
+                        base_name=f"Token-Budgeted-BFS-{budget}-{tag}",
+                        model_id=model_id,
+                        shared_group=f"Token-Budgeted-BFS-{budget}-{tag}",
+                        base_kwargs={
+                            "bfs_depth": 3,
+                            "context_token_budget": budget,
+                            **llm_device_kwargs,
+                        },
+                        agent_class=BaselineAgent,
+                        is_baseline=True,
+                    )
+                )
 
         specs.extend(
             paired_serialization_specs(
@@ -200,59 +291,185 @@ def build_model_specs():
             )
         )
 
-        # specs.extend(
-        #     paired_serialization_specs(
-        #         base_name=f"Spine-GrammarExpansion-{tag}",
-        #         model_id=model_id,
-        #         shared_group=f"Spine-GrammarExpansion-{tag}",
-        #         base_kwargs={
-        #             **llm_device_kwargs,
-        #             "use_grammar_rerank": True,
-        #             "use_grammar_expansion": True,
-        #             "use_fallback_correction": False,
-        #             "use_grammar_hint": False,
-        #             "expansion_strict": True,
-        #             "expansion_min_prob": 0.005,
-        #             "expansion_per_node_cap": 5,
-        #         },
-        #     )
-        # )
+        if include_legacy_expansion_specs:
+            specs.extend(
+                paired_serialization_specs(
+                    base_name=f"Spine-GrammarExpansion-{tag}",
+                    model_id=model_id,
+                    shared_group=f"Spine-GrammarExpansion-{tag}",
+                    base_kwargs={
+                        **llm_device_kwargs,
+                        "use_grammar_rerank": True,
+                        "use_grammar_expansion": True,
+                        "use_fallback_correction": False,
+                        "use_grammar_hint": False,
+                        "expansion_strict": True,
+                        "expansion_min_prob": 0.005,
+                        "expansion_per_node_cap": 5,
+                    },
+                )
+            )
 
-        # specs.extend(
-        #     paired_serialization_specs(
-        #         base_name=f"Spine-RandomExpansion-{tag}",
-        #         model_id=model_id,
-        #         shared_group=f"Spine-RandomExpansion-{tag}",
-        #         base_kwargs={
-        #             **llm_device_kwargs,
-        #             "use_grammar_rerank": False,
-        #             "use_grammar_expansion": False,
-        #             "use_random_expansion": True,
-        #             "use_fallback_correction": False,
-        #             "use_grammar_hint": False,
-        #             "expansion_per_node_cap": 5,
-        #             "grammar_path": None,
-        #         },
-        #     )
-        # )
+            specs.extend(
+                paired_serialization_specs(
+                    base_name=f"Spine-RandomExpansion-{tag}",
+                    model_id=model_id,
+                    shared_group=f"Spine-RandomExpansion-{tag}",
+                    base_kwargs={
+                        **llm_device_kwargs,
+                        "use_grammar_rerank": False,
+                        "use_grammar_expansion": False,
+                        "use_random_expansion": True,
+                        "use_fallback_correction": False,
+                        "use_grammar_hint": False,
+                        "expansion_per_node_cap": 5,
+                        "grammar_path": None,
+                    },
+                )
+            )
 
-        # specs.extend(
-        #     paired_serialization_specs(
-        #         base_name=f"Spine-FrequencyExpansion-{tag}",
-        #         model_id=model_id,
-        #         shared_group=f"Spine-FrequencyExpansion-{tag}",
-        #         base_kwargs={
-        #             **llm_device_kwargs,
-        #             "use_grammar_rerank": False,
-        #             "use_grammar_expansion": False,
-        #             "use_frequency_expansion": True,
-        #             "use_fallback_correction": False,
-        #             "use_grammar_hint": False,
-        #             "expansion_per_node_cap": 5,
-        #             "grammar_path": None,
-        #         },
-        #     )
-        # )
+            specs.extend(
+                paired_serialization_specs(
+                    base_name=f"Spine-FrequencyExpansion-{tag}",
+                    model_id=model_id,
+                    shared_group=f"Spine-FrequencyExpansion-{tag}",
+                    base_kwargs={
+                        **llm_device_kwargs,
+                        "use_grammar_rerank": False,
+                        "use_grammar_expansion": False,
+                        "use_frequency_expansion": True,
+                        "use_fallback_correction": False,
+                        "use_grammar_hint": False,
+                        "expansion_per_node_cap": 5,
+                        "grammar_path": None,
+                    },
+                )
+            )
+
+        if include_new_ablation_specs:
+            controlled_budget = {
+                "num_candidates": int_env("HRG_NUM_CANDIDATES", 8),
+                "valid_chain_fallback_topk": int_env("HRG_VALID_CHAIN_FALLBACK_TOPK", 12),
+                "valid_chain_fallback_beam_width": int_env("HRG_VALID_CHAIN_FALLBACK_BEAM_WIDTH", 48),
+                "valid_chain_fallback_branch": int_env("HRG_VALID_CHAIN_FALLBACK_BRANCH", 16),
+                "max_total_context_edges": int_env("HRG_MAX_TOTAL_CONTEXT_EDGES", 160),
+                "use_low_confidence_valid_chain_fallback": bool_env("HRG_USE_LOW_CONFIDENCE_VALID_CHAIN_FALLBACK", False),
+                "low_confidence_min_valid_candidates": int_env("HRG_LOW_CONFIDENCE_MIN_VALID_CANDIDATES", 2),
+                "subgraph_support_saturation": int_env("HRG_SUBGRAPH_SUPPORT_SATURATION", 12),
+            }
+
+            specs.extend(
+                paired_serialization_specs(
+                    base_name=f"Spine-Correction-KGValidFallback-{tag}",
+                    model_id=model_id,
+                    shared_group=f"Spine-Correction-KGValidFallback-{tag}",
+                    base_kwargs={
+                        **llm_device_kwargs,
+                        **controlled_budget,
+                        "use_grammar_rerank": False,
+                        "use_grammar_expansion": False,
+                        "use_fallback_correction": True,
+                        "use_deterministic_valid_chain_fallback": True,
+                        "use_valid_chain_llm_rerank": False,
+                        "use_grammar_hint": False,
+                        "grammar_path": None,
+                    },
+                )
+            )
+
+            specs.extend(
+                paired_serialization_specs(
+                    base_name=f"HRG-Proposed-NoExpansion-{tag}",
+                    model_id=model_id,
+                    shared_group=f"HRG-Proposed-NoExpansion-{tag}",
+                    base_kwargs={
+                        **llm_device_kwargs,
+                        **controlled_budget,
+                        "use_grammar_rerank": True,
+                        "use_grammar_expansion": False,
+                        "use_fallback_correction": True,
+                        "use_deterministic_valid_chain_fallback": True,
+                        "use_valid_chain_llm_rerank": True,
+                        "use_grammar_hint": False,
+                        "require_ordered_grammar_match": bool_env("HRG_REQUIRE_ORDERED_GRAMMAR_MATCH", False),
+                    },
+                )
+            )
+
+            specs.extend(
+                paired_serialization_specs(
+                    base_name=f"HRG-Proposed-Expansion-{tag}",
+                    model_id=model_id,
+                    shared_group=f"HRG-Proposed-Expansion-{tag}",
+                    base_kwargs={
+                        **llm_device_kwargs,
+                        **controlled_budget,
+                        "use_grammar_rerank": True,
+                        "use_grammar_expansion": True,
+                        "use_fallback_correction": True,
+                        "use_deterministic_valid_chain_fallback": True,
+                        "use_valid_chain_llm_rerank": True,
+                        "use_grammar_hint": False,
+                        "expansion_strict": True,
+                        "expansion_min_prob": 2.0,
+                        "expansion_per_node_cap": 4,
+                        "min_grammar_score_for_expansion": 2.0,
+                        "max_spine_edges_for_expansion": 80,
+                        "require_ordered_grammar_match": bool_env("HRG_REQUIRE_ORDERED_GRAMMAR_MATCH", False),
+                        "require_exact_grammar_match_for_expansion": False,
+                        "max_expansion_edges": 48,
+                        "max_expansion_edge_ratio": 0.5,
+                    },
+                )
+            )
+
+            specs.extend(
+                paired_serialization_specs(
+                    base_name=f"HRG-GrammarFirst-NoExpansion-{tag}",
+                    model_id=model_id,
+                    shared_group=f"HRG-GrammarFirst-NoExpansion-{tag}",
+                    base_kwargs={
+                        **llm_device_kwargs,
+                        **controlled_budget,
+                        "use_grammar_first_retrieval": True,
+                        "use_grammar_rerank": True,
+                        "use_grammar_expansion": False,
+                        "use_fallback_correction": False,
+                        "use_deterministic_valid_chain_fallback": True,
+                        "use_valid_chain_llm_rerank": True,
+                        "use_grammar_hint": False,
+                        "require_ordered_grammar_match": bool_env("HRG_REQUIRE_ORDERED_GRAMMAR_MATCH", False),
+                    },
+                )
+            )
+
+            specs.extend(
+                paired_serialization_specs(
+                    base_name=f"HRG-GrammarFirst-Expansion-{tag}",
+                    model_id=model_id,
+                    shared_group=f"HRG-GrammarFirst-Expansion-{tag}",
+                    base_kwargs={
+                        **llm_device_kwargs,
+                        **controlled_budget,
+                        "use_grammar_first_retrieval": True,
+                        "use_grammar_rerank": True,
+                        "use_grammar_expansion": True,
+                        "use_fallback_correction": False,
+                        "use_deterministic_valid_chain_fallback": True,
+                        "use_valid_chain_llm_rerank": True,
+                        "use_grammar_hint": False,
+                        "expansion_strict": True,
+                        "expansion_min_prob": 2.0,
+                        "expansion_per_node_cap": 4,
+                        "min_grammar_score_for_expansion": 2.0,
+                        "max_spine_edges_for_expansion": 80,
+                        "require_ordered_grammar_match": bool_env("HRG_REQUIRE_ORDERED_GRAMMAR_MATCH", False),
+                        "require_exact_grammar_match_for_expansion": False,
+                        "max_expansion_edges": 48,
+                        "max_expansion_edge_ratio": 0.5,
+                    },
+                )
+            )
 
         specs.extend(
             paired_serialization_specs(
@@ -261,32 +478,65 @@ def build_model_specs():
                 shared_group=f"HRG-Proposed-{tag}",
                 base_kwargs={
                     **llm_device_kwargs,
-                    "num_candidates": 8,
+                    "num_candidates": int_env("HRG_NUM_CANDIDATES", 8),
                     "use_grammar_rerank": True,
                     "use_grammar_expansion": True,
                     "use_fallback_correction": True,
                     "use_deterministic_valid_chain_fallback": True,
                     "use_valid_chain_llm_rerank": True,
-                    "valid_chain_fallback_topk": 12,
-                    "valid_chain_fallback_beam_width": 48,
-                    "valid_chain_fallback_branch": 16,
+                    "valid_chain_fallback_topk": int_env("HRG_VALID_CHAIN_FALLBACK_TOPK", 12),
+                    "valid_chain_fallback_beam_width": int_env("HRG_VALID_CHAIN_FALLBACK_BEAM_WIDTH", 48),
+                    "valid_chain_fallback_branch": int_env("HRG_VALID_CHAIN_FALLBACK_BRANCH", 16),
                     "use_grammar_hint": False,
                     "expansion_strict": True,
                     "expansion_min_prob": 2.0,
                     "expansion_per_node_cap": 4,
                     "min_grammar_score_for_expansion": 2.0,
                     "max_spine_edges_for_expansion": 80,
-                    "require_ordered_grammar_match": False,
+                    "require_ordered_grammar_match": bool_env("HRG_REQUIRE_ORDERED_GRAMMAR_MATCH", False),
                     "require_exact_grammar_match_for_expansion": False,
                     "max_expansion_edges": 48,
                     "max_expansion_edge_ratio": 0.5,
-                    "max_total_context_edges": 160,
-                    "use_low_confidence_valid_chain_fallback": False,
-                    "low_confidence_min_valid_candidates": 2,
-                    "subgraph_support_saturation": 12,
+                    "max_total_context_edges": int_env("HRG_MAX_TOTAL_CONTEXT_EDGES", 160),
+                    "use_low_confidence_valid_chain_fallback": bool_env("HRG_USE_LOW_CONFIDENCE_VALID_CHAIN_FALLBACK", False),
+                    "low_confidence_min_valid_candidates": int_env("HRG_LOW_CONFIDENCE_MIN_VALID_CANDIDATES", 2),
+                    "subgraph_support_saturation": int_env("HRG_SUBGRAPH_SUPPORT_SATURATION", 12),
                 },
             )
         )
+
+        if include_ngram_specs:
+            for prior_name, prior_order in [
+                ("RelationUnigram", 1),
+                ("RelationBigram", 2),
+                ("RelationTrigram", 3),
+            ]:
+                specs.extend(
+                    paired_serialization_specs(
+                        base_name=f"{prior_name}-{tag}",
+                        model_id=model_id,
+                        shared_group=f"{prior_name}-{tag}",
+                        base_kwargs={
+                            **llm_device_kwargs,
+                            "num_candidates": 8,
+                            "use_grammar_rerank": False,
+                            "use_grammar_expansion": False,
+                            "use_fallback_correction": True,
+                            "use_deterministic_valid_chain_fallback": True,
+                            "use_valid_chain_llm_rerank": False,
+                            "valid_chain_fallback_topk": 12,
+                            "valid_chain_fallback_beam_width": 48,
+                            "valid_chain_fallback_branch": 16,
+                            "use_grammar_hint": False,
+                            "relation_ngram_prior_order": prior_order,
+                            "relation_ngram_prior_alpha": 0.1,
+                            "max_total_context_edges": 160,
+                            "use_low_confidence_valid_chain_fallback": False,
+                            "low_confidence_min_valid_candidates": 2,
+                            "subgraph_support_saturation": 12,
+                        },
+                    )
+                )
 
     return specs
 
@@ -367,6 +617,8 @@ def apply_dataset_agent_overrides(args, model_name: str, agent_class, agent_kwar
     tuned = dict(agent_kwargs)
     if agent_class is not KnowledgeGraphAgent:
         return tuned
+    if getattr(args, "fixed_ablation_budget", False):
+        return tuned
 
     if args.dataset == "mlpq":
         # Multilingual KG needs broader chain exploration and fallback search.
@@ -397,6 +649,12 @@ def save_full_report(full_report: dict, output_file: str) -> None:
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(full_report, f, indent=4, ensure_ascii=False)
+
+
+def append_failure_record(failure_file: str, payload: dict) -> None:
+    os.makedirs(os.path.dirname(failure_file), exist_ok=True)
+    with open(failure_file, "a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
 
 
 def safe_clear_gpu_cache(model_name: str) -> bool:
@@ -438,6 +696,12 @@ def parse_args():
     parser.add_argument("--relation-path", default=None)
     parser.add_argument("--alias-path", default=None)
     parser.add_argument("--grammar-path", default=None)
+    parser.add_argument("--kb-ablation-mode", choices=["none", "drop_nodes", "drop_relations"], default="none")
+    parser.add_argument("--kb-ablation-ratio", type=float, default=0.0)
+    parser.add_argument("--kb-ablation-seed", type=int, default=0)
+    parser.add_argument("--fixed-ablation-budget", action="store_true", help="Disable dataset-specific budget overrides for controlled ablations.")
+    parser.add_argument("--retry-failed", action="store_true", help="Rerun models currently recorded as FAILED in benchmark_results.json.")
+    parser.add_argument("--run-tag-suffix", default=None)
     parser.add_argument("--artifacts-root", default=ARTIFACTS_ROOT)
     parser.add_argument("--output-file", default=OUTPUT_FILE)
     parser.add_argument("--detail-csv", default=DETAIL_CSV)
@@ -494,6 +758,7 @@ def resolve_run_tag(args):
         mlpq_kb_mode=args.mlpq_kb_mode,
         mlpq_kb_lang=args.mlpq_kb_lang,
         custom_dataset_name=args.custom_dataset_name,
+        suffix=args.run_tag_suffix,
     )
 
 
@@ -1282,6 +1547,7 @@ async def evaluate_single_model(
         "avg_parse1_tokens": avg_parse1_tokens,
         "avg_correction_tokens": avg_correction_tokens,
         "avg_parse2_tokens": avg_parse2_tokens,
+        "avg_total_online_token_proxy": avg_parse1_tokens + avg_correction_tokens + avg_parse2_tokens + avg_ctx_tokens,
         "avg_subgraph_size": avg_subgraph_size,
         "avg_retrieval_recall": avg_retrieval_recall,
         "avg_retrieval_precision": avg_retrieval_precision,
@@ -1300,14 +1566,22 @@ async def evaluate_single_model(
 # ==========================================
 async def main():
     args = parse_args()
+    if not 0.0 <= args.kb_ablation_ratio <= 1.0:
+        raise ValueError(f"--kb-ablation-ratio must be within [0, 1], got {args.kb_ablation_ratio}")
     dataset_splits, hop_overrides = build_dataset_splits(args)
     run_tag = resolve_run_tag(args)
     output_file, detail_csv = resolve_output_paths(args, run_tag)
+    failure_file = os.path.join(os.path.dirname(output_file), "failure_report.jsonl")
     dump_root = resolve_dump_root(args, run_tag)
 
     print("==========================================")
     print(f"  {args.dataset.upper()} Benchmark & Data Collection")
     print(f"  Run Tag: {run_tag}")
+    print(f"  Experiment Suite: {EXPERIMENT_SUITE}")
+    if args.fixed_ablation_budget:
+        print("  Budget Mode: fixed ablation budget")
+    if args.kb_ablation_mode != "none" and args.kb_ablation_ratio > 0.0:
+        print(f"  KG Ablation: mode={args.kb_ablation_mode} ratio={args.kb_ablation_ratio:.3f} seed={args.kb_ablation_seed}")
     print("==========================================")
 
     full_report = {}
@@ -1366,12 +1640,19 @@ async def main():
             print(f"[Skip] {run_model_name} 不符合 model filter: {args.model_filter}")
             continue
 
-        # Skip if already done
+        # Skip if already done. FAILED entries can be retried explicitly.
         if run_model_name in already_done:
-            print(f"[Skip] {run_model_name} 已有結果，跳過。")
-            continue
+            existing = full_report.get(run_model_name)
+            if args.retry_failed and existing == "FAILED":
+                print(f"[Retry] {run_model_name} 目前標記為 FAILED，依 --retry-failed 重跑。")
+                full_report.pop(run_model_name, None)
+                already_done.discard(run_model_name)
+            else:
+                print(f"[Skip] {run_model_name} 已有結果，跳過。")
+                continue
 
         agent_instance = None
+        tuned_agent_kwargs = None
         try:
             print(f"[System] Initializing {run_model_name} with class {agent_class.__name__}.")
             tuned_agent_kwargs = apply_dataset_agent_overrides(args, name, agent_class, agent_kwargs)
@@ -1382,6 +1663,9 @@ async def main():
             init_kwargs.pop("shared_retrieval_group", None)
             init_kwargs["kb_path"] = common_kb_path
             init_kwargs["relation_path"] = common_relation_path
+            init_kwargs["kb_ablation_mode"] = None if args.kb_ablation_mode == "none" else args.kb_ablation_mode
+            init_kwargs["kb_ablation_ratio"] = args.kb_ablation_ratio
+            init_kwargs["kb_ablation_seed"] = args.kb_ablation_seed
             if agent_class is KnowledgeGraphAgent and init_kwargs.get("grammar_path", "__DEFAULT__") is not None:
                 init_kwargs["grammar_path"] = common_grammar_path
             agent_instance = agent_class(**init_kwargs)
@@ -1405,11 +1689,34 @@ async def main():
 
         except Exception as e:
             print(f"[Error] 模型 {run_model_name} 執行失敗: {e}")
-            import traceback
-            traceback.print_exc()
+            tb = traceback.format_exc()
+            print(tb)
             full_report[run_model_name] = "FAILED"
+            append_failure_record(failure_file, {
+                "run_tag": run_tag,
+                "dataset": args.dataset,
+                "model_name": name,
+                "run_model_name": run_model_name,
+                "agent_class": agent_class.__name__,
+                "is_baseline": is_baseline,
+                "model_id": (tuned_agent_kwargs or agent_kwargs or {}).get("model_id"),
+                "error_type": type(e).__name__,
+                "error": str(e),
+                "traceback": tb,
+                "experiment_suite": EXPERIMENT_SUITE,
+                "fixed_ablation_budget": bool(args.fixed_ablation_budget),
+                "kb_ablation_mode": args.kb_ablation_mode,
+                "kb_ablation_ratio": args.kb_ablation_ratio,
+                "kb_ablation_seed": args.kb_ablation_seed,
+                "agent_kwargs": {
+                    key: value
+                    for key, value in dict(tuned_agent_kwargs or agent_kwargs or {}).items()
+                    if key not in {"shared_retrieval_group"}
+                },
+            })
             save_full_report(full_report, output_file)
             print(f"[Info] 已暫存失敗狀態至 {output_file}")
+            print(f"[Info] 失敗診斷已追加至 {failure_file}")
 
         finally:
             print(f"[System] Unloading {run_model_name} to free VRAM.")

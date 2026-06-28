@@ -13,6 +13,8 @@ ENV/
 
 # Tooling caches
 .cache/
+.agents/
+.codex/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -23,10 +25,46 @@ htmlcov/
 # Local environment and secrets
 .env
 config.env
+*.local.env
+*.secret
+*.secrets
+
+# Model/checkpoint files
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
 
 # Runtime outputs
 artifacts/
-configs/
+artifacts_*/
+artifacts*/
+artifect_*/
+artifect*/
+results/
+dumps/
+outputs/
+failure_report.jsonl
+
+# Generated archives and local handoff bundles
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+
+# Generated LaTeX/build sidecars
+*.aux
+*.log
+*.out
+*.toc
+
+# Local suggestion files / private review material
+*.docx
+
+# Auto-generated local config snapshots. Commit portable configs/config.*.env instead.
+configs/.autogen*.env
 
 # Local datasets and knowledge bases
 Datasets/

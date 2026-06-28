@@ -127,6 +127,9 @@ def summarize_model(model_name: str, model_dir: Path) -> Dict[str, Any]:
     valid_candidates = 0
     grammar_hit_candidates = 0
     same_arity_candidates = 0
+    ordered_path_candidates = 0
+    weak_label_candidates = 0
+    weak_label_only_candidates = 0
     matched_rule_count_total = 0
     grammar_hit_questions = 0
     correction_salvaged = 0
@@ -169,6 +172,12 @@ def summarize_model(model_name: str, model_dir: Path) -> Dict[str, Any]:
                 grammar_hit_candidates += 1
             if cand.get("grammar_same_arity_hit"):
                 same_arity_candidates += 1
+            if cand.get("grammar_ordered_path_hit"):
+                ordered_path_candidates += 1
+            if cand.get("grammar_weak_label_match"):
+                weak_label_candidates += 1
+                if not cand.get("grammar_same_arity_hit") and not cand.get("grammar_ordered_path_hit"):
+                    weak_label_only_candidates += 1
         if (not had_initial_valid) and had_any_valid and had_correction_valid:
             correction_salvaged += 1
 
@@ -218,6 +227,10 @@ def summarize_model(model_name: str, model_dir: Path) -> Dict[str, Any]:
         "candidate_validity_rate": (valid_candidates / total_candidates) if total_candidates else 0.0,
         "candidate_grammar_hit_rate": (grammar_hit_candidates / total_candidates) if total_candidates else 0.0,
         "candidate_same_arity_hit_rate": (same_arity_candidates / total_candidates) if total_candidates else 0.0,
+        "candidate_ordered_path_hit_rate": (ordered_path_candidates / total_candidates) if total_candidates else 0.0,
+        "candidate_weak_label_hit_rate": (weak_label_candidates / total_candidates) if total_candidates else 0.0,
+        "candidate_weak_label_only_rate": (weak_label_only_candidates / total_candidates) if total_candidates else 0.0,
+        "avg_matched_rule_count": (matched_rule_count_total / len(rows)) if rows else 0.0,
         "correction_salvage_rate": (correction_salvaged / len(rows)) if rows else 0.0,
         "failure_counts_from_dump": dict(failure_counts),
         "candidate_source_counts": dict(source_counts),

@@ -37,6 +37,11 @@ class BaselineKnowledgeGraphAgent:
         bfs_depth: int = 2,             # BFS 展開最大深度
         max_edges_per_hop: int = 500,   # 防爆：每 hop 最多保留多少條邊
         max_frontier: int = 5000,       # 防爆：frontier node 上限
+        context_token_budget: Optional[int] = None,
+        context_edge_budget: Optional[int] = None,
+        kb_ablation_mode: Optional[str] = None,
+        kb_ablation_ratio: float = 0.0,
+        kb_ablation_seed: int = 0,
     ):
         print(f"[Init] Loading LLM strategy for: {model_id} ...")
         self.llm = build_llm_strategy(
@@ -50,6 +55,11 @@ class BaselineKnowledgeGraphAgent:
         self.bfs_depth = bfs_depth
         self.max_edges_per_hop = max_edges_per_hop
         self.max_frontier = max_frontier
+        self.context_token_budget = context_token_budget
+        self.context_edge_budget = context_edge_budget
+        self.kb_ablation_mode = kb_ablation_mode
+        self.kb_ablation_ratio = kb_ablation_ratio
+        self.kb_ablation_seed = kb_ablation_seed
 
         print("[Init] Loading Knowledge Graph data...")
         self.kb_out, self.kb_in, self.all_nodes, self.relations, self.alias_map = self._load_data(kb_path, relation_path)
@@ -208,8 +218,16 @@ class BaselineKnowledgeGraphAgent:
             relations: list of relation strings
         """
         try:
-            kb_out, kb_in, all_nodes, derived_relations, alias_map = load_kb_adjacency(kb_path)
+            kb_out, kb_in, all_nodes, derived_relations, alias_map = load_kb_adjacency(
+                kb_path,
+                ablation_mode=self.kb_ablation_mode,
+                ablation_ratio=self.kb_ablation_ratio,
+                ablation_seed=self.kb_ablation_seed,
+            )
             relations = load_relation_list(relation_path=relation_path, kb_path=kb_path)
+            if relations:
+                derived = set(derived_relations)
+                relations = [rel for rel in relations if rel in derived]
             if not relations:
                 relations = derived_relations
             return kb_out, kb_in, all_nodes, relations, alias_map
@@ -374,8 +392,8 @@ class BaselineKnowledgeGraphAgent:
 
             for ent in frontier:
                 # Outgoing edges: ent --[rel]--> tail
-                for rel, tails in self.kb_out.get(ent, {}).items():
-                    for tail in tails:
+                for rel, tails in sorted(self.kb_out.get(ent, {}).items()):
+                    for tail in sorted(tails):
                         edge = (ent, rel, tail)
                         if edge not in visited_edges:
                             visited_edges.add(edge)
@@ -385,8 +403,8 @@ class BaselineKnowledgeGraphAgent:
                                 next_frontier.add(tail)
 
                 # Incoming edges: head --[rel]--> ent
-                for rel, heads in self.kb_in.get(ent, {}).items():
-                    for head in heads:
+                for rel, heads in sorted(self.kb_in.get(ent, {}).items()):
+                    for head in sorted(heads):
                         edge = (head, rel, ent)
                         if edge not in visited_edges:
                             visited_edges.add(edge)
@@ -411,6 +429,40 @@ class BaselineKnowledgeGraphAgent:
 
         print(f"[BFS] Total collected edges: {len(collected_edges)}")
         return collected_edges
+
+    def _context_lines_for_edges(self, context_edges: List[Tuple[str, str, str]]) -> List[str]:
+        if not context_edges:
+            return ["No information found."]
+        lines = ["Knowledge Graph Context:"]
+        for i, (s, r, o) in enumerate(context_edges, 1):
+            lines.append(f"{i}. {self._display_node(s)} --[{r}]--> {self._display_node(o)}")
+        return lines
+
+    def _context_string_for_edges(self, context_edges: List[Tuple[str, str, str]]) -> str:
+        return "\n".join(self._context_lines_for_edges(context_edges))
+
+    def _apply_context_budgets(
+        self,
+        edges: List[Tuple[str, str, str]],
+    ) -> List[Tuple[str, str, str]]:
+        budgeted = list(edges)
+
+        if self.context_edge_budget is not None:
+            budgeted = budgeted[: max(0, int(self.context_edge_budget))]
+
+        if self.context_token_budget is None or self.context_token_budget <= 0:
+            return budgeted
+
+        selected: List[Tuple[str, str, str]] = []
+        budget = int(self.context_token_budget)
+        for edge in budgeted:
+            trial = selected + [edge]
+            token_count = self._estimate_tokens(self._context_string_for_edges(trial))
+            if token_count <= budget or not selected:
+                selected = trial
+            else:
+                break
+        return selected
 
     # ============================================================
     # Retrieval 指標計算（Recall / Precision / F1）
@@ -487,13 +539,7 @@ class BaselineKnowledgeGraphAgent:
         """
         Returns: (answer, parse2_tokens, context_tokens)
         """
-        if not context_edges:
-            context_str = "No information found."
-        else:
-            lines = ["Knowledge Graph Context:"]
-            for i, (s, r, o) in enumerate(context_edges, 1):
-                lines.append(f"{i}. {self._display_node(s)} --[{r}]--> {self._display_node(o)}")
-            context_str = "\n".join(lines)
+        context_str = self._context_string_for_edges(context_edges)
 
         context_tokens = self._estimate_tokens(context_str)
 
@@ -611,10 +657,16 @@ class BaselineKnowledgeGraphAgent:
         # 2. True BFS expand (no chain guidance)
         retrieval_t0 = time.perf_counter()
         depth = hop_override if hop_override is not None else self.bfs_depth
-        edges = self._bfs_expand(entity, depth=depth)
+        raw_edges = self._bfs_expand(entity, depth=depth)
+        edges = self._apply_context_budgets(raw_edges)
         retrieval_latency = time.perf_counter() - retrieval_t0
         subgraph_size = len(edges)
         self.total_subgraph_size += subgraph_size
+        if len(edges) != len(raw_edges):
+            print(
+                f"[BFS Budget] kept={len(edges)} raw={len(raw_edges)} "
+                f"token_budget={self.context_token_budget} edge_budget={self.context_edge_budget}"
+            )
 
         # 3. Retrieval metrics
         retrieval_recall = 0.0
@@ -649,16 +701,12 @@ class BaselineKnowledgeGraphAgent:
         print(f"[Answer] {answer} | tokens~{p2_tokens} | ctx_tokens~{context_tokens}\n")
 
         if save_path:
-            context_str = ""
-            if edges:
-                lines = ["Knowledge Graph Context:"]
-                for i, (s, r, o) in enumerate(edges, 1):
-                    lines.append(f"{i}. {self._display_node(s)} --[{r}]--> {self._display_node(o)}")
-                context_str = "\n".join(lines)
+            context_str = self._context_string_for_edges(edges) if edges else ""
             self._dump(save_path, {
                 "question": user_prompt,
                 "entity": entity,
                 "edges": edges,
+                "raw_bfs_edges": raw_edges,
                 "answer": answer,
                 "failure_stage": "retrieval_empty" if not edges else "ok",
                 "references": references or [],
@@ -667,6 +715,8 @@ class BaselineKnowledgeGraphAgent:
                 "retrieval_f1": retrieval_f1,
                 "subgraph_size": subgraph_size,
                 "selected_depth": depth,
+                "context_token_budget": self.context_token_budget,
+                "context_edge_budget": self.context_edge_budget,
                 "serialization_format": "baseline_bfs_text",
                 "final_context": context_str,
                 "timing": {

@@ -6,6 +6,7 @@ import unicodedata
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, DefaultDict, Dict, Iterable, List, Optional, Set, Tuple
+import random
 
 
 FREEBASE_NS_PREFIXES = (
@@ -264,6 +265,9 @@ def load_kb_adjacency(
     max_triples: Optional[int] = None,
     sanitize_entity_fn: Optional[Callable[[str], str]] = None,
     collect_aliases: bool = True,
+    ablation_mode: Optional[str] = None,
+    ablation_ratio: float = 0.0,
+    ablation_seed: int = 0,
 ) -> Tuple[
     DefaultDict[str, DefaultDict[str, Set[str]]],
     DefaultDict[str, DefaultDict[str, Set[str]]],
@@ -279,7 +283,17 @@ def load_kb_adjacency(
 
     sanitize = sanitize_entity_fn or (lambda x: x)
 
-    for h, r, t in iter_kb_triples(kb_path, max_triples=max_triples):
+    raw_triples = list(iter_kb_triples(kb_path, max_triples=max_triples))
+    if ablation_mode and ablation_ratio > 0.0:
+        raw_triples = apply_kb_ablation(
+            raw_triples,
+            mode=ablation_mode,
+            ratio=ablation_ratio,
+            seed=ablation_seed,
+            sanitize_entity_fn=sanitize,
+        )
+
+    for h, r, t in raw_triples:
         hs = sanitize(h)
         ts = sanitize(t)
         rs = r.strip()
@@ -303,6 +317,48 @@ def load_kb_adjacency(
                     alias_map[ts].add(alias)
 
     return kb_out, kb_in, all_nodes, sorted(relations), dict(alias_map)
+
+
+def apply_kb_ablation(
+    triples: List[Tuple[str, str, str]],
+    mode: str,
+    ratio: float,
+    seed: int = 0,
+    sanitize_entity_fn: Optional[Callable[[str], str]] = None,
+) -> List[Tuple[str, str, str]]:
+    mode = (mode or "").strip().lower()
+    if mode in {"", "none"} or ratio <= 0.0:
+        return list(triples)
+
+    if mode not in {"drop_nodes", "drop_relations"}:
+        raise ValueError(f"Unsupported ablation mode: {mode}")
+
+    ratio = max(0.0, min(1.0, float(ratio)))
+    sanitize = sanitize_entity_fn or (lambda x: x)
+    rng = random.Random(seed)
+
+    if mode == "drop_nodes":
+        nodes = sorted({sanitize(h) for h, _, _ in triples} | {sanitize(t) for _, _, t in triples})
+        if not nodes:
+            return list(triples)
+        drop_count = min(len(nodes), int(round(len(nodes) * ratio)))
+        if drop_count <= 0:
+            return list(triples)
+        dropped = set(rng.sample(nodes, drop_count))
+        return [
+            (h, r, t)
+            for h, r, t in triples
+            if sanitize(h) not in dropped and sanitize(t) not in dropped
+        ]
+
+    relations = sorted({r.strip() for _, r, _ in triples if r.strip()})
+    if not relations:
+        return list(triples)
+    drop_count = min(len(relations), int(round(len(relations) * ratio)))
+    if drop_count <= 0:
+        return list(triples)
+    dropped = set(rng.sample(relations, drop_count))
+    return [(h, r, t) for h, r, t in triples if r.strip() not in dropped]
 
 
 def load_metaqa_dataset(file_path: str) -> List[Tuple[str, List[str]]]:

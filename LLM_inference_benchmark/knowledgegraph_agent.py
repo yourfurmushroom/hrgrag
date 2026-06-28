@@ -6,6 +6,7 @@ import pickle
 import time
 import random
 import hashlib
+import math
 from collections import Counter, defaultdict
 from typing import Tuple, List, Optional, Dict, Any, Set, DefaultDict
 
@@ -193,6 +194,19 @@ class HRGMatcher:
 
 class KnowledgeGraphAgent:
     STATEMENT_RELATION_SUFFIX = "::statement"
+    LOW_INFORMATION_RELATIONS = {
+        "name",
+        "instanceOf",
+        "fact_h",
+        "fact_r",
+        "fact_t",
+    }
+    QUESTION_ENTITY_STOPWORDS = {
+        "a", "an", "and", "are", "as", "at", "by", "for", "from", "got",
+        "have", "has", "how", "in", "is", "it", "many", "of", "on", "or",
+        "the", "to", "was", "were", "what", "when", "where", "which", "who",
+        "whose", "with",
+    }
 
     def __init__(
         self,
@@ -230,6 +244,8 @@ class KnowledgeGraphAgent:
         top_k_edges: Optional[int] = None,
         # ---- HRG-D: grammar-guided constrained BFS retrieval (original design) ----
         use_grammar_guided_retrieval: bool = False,
+        # ---- Grammar-first retrieval: enumerate KG-valid chains before LLM chain parsing ----
+        use_grammar_first_retrieval: bool = False,
         # ---- Deterministic fallback: enumerate KG-valid chains before giving up ----
         use_deterministic_valid_chain_fallback: bool = False,
         valid_chain_fallback_topk: int = 8,
@@ -246,7 +262,12 @@ class KnowledgeGraphAgent:
         use_low_confidence_valid_chain_fallback: bool = False,
         low_confidence_min_valid_candidates: int = 2,
         subgraph_support_saturation: int = 12,
+        relation_ngram_prior_order: int = 0,
+        relation_ngram_prior_alpha: float = 0.1,
         alias_path: Optional[str] = None,
+        kb_ablation_mode: Optional[str] = None,
+        kb_ablation_ratio: float = 0.0,
+        kb_ablation_seed: int = 0,
     ):
         print(f"[Init] Loading LLM strategy for: {model_id} ...")
         self.llm = build_llm_strategy(
@@ -278,6 +299,7 @@ class KnowledgeGraphAgent:
         self.random_expansion_seed = random_expansion_seed
         self.top_k_edges = top_k_edges
         self.use_grammar_guided_retrieval = use_grammar_guided_retrieval
+        self.use_grammar_first_retrieval = use_grammar_first_retrieval
         self.use_deterministic_valid_chain_fallback = use_deterministic_valid_chain_fallback
         self.valid_chain_fallback_topk = valid_chain_fallback_topk
         self.valid_chain_fallback_beam_width = valid_chain_fallback_beam_width
@@ -292,6 +314,9 @@ class KnowledgeGraphAgent:
         self.use_low_confidence_valid_chain_fallback = use_low_confidence_valid_chain_fallback
         self.low_confidence_min_valid_candidates = low_confidence_min_valid_candidates
         self.subgraph_support_saturation = subgraph_support_saturation
+        self.relation_ngram_prior_order = int(relation_ngram_prior_order or 0)
+        self.relation_ngram_prior_alpha = float(relation_ngram_prior_alpha or 0.1)
+        self._relation_ngram_prior: Optional[Dict[str, Any]] = None
 
         # ===== Metrics =====
         self.hit_grammar_count = 0
@@ -317,12 +342,18 @@ class KnowledgeGraphAgent:
         self.max_frontier = max_frontier
         self.per_entity_cap = per_entity_cap
         self.alias_path = alias_path
+        self.kb_ablation_mode = kb_ablation_mode
+        self.kb_ablation_ratio = kb_ablation_ratio
+        self.kb_ablation_seed = kb_ablation_seed
 
         print("[Init] Loading KB + building adjacency index...")
         self.kb_out, self.kb_in, self.all_nodes, derived_relations, self.alias_map = load_kb_adjacency(
             self.kb_path,
             max_triples=self.max_kb_triples,
             sanitize_entity_fn=self._sanitize_entity,
+            ablation_mode=self.kb_ablation_mode,
+            ablation_ratio=self.kb_ablation_ratio,
+            ablation_seed=self.kb_ablation_seed,
         )
         self.extra_entity_aliases, self.relation_aliases = load_alias_mapping(alias_path)
         self._merge_entity_aliases(self.extra_entity_aliases)
@@ -338,6 +369,7 @@ class KnowledgeGraphAgent:
         else:
             self.hrg = None
             print("[Init] No grammar path provided or file not found. HRG disabled.")
+        self._relation_ngram_prior = self._build_relation_ngram_prior()
 
         print("[Init] Ready.")
 
@@ -408,6 +440,9 @@ class KnowledgeGraphAgent:
             kb_path=self.kb_path,
             max_triples=self.max_kb_triples,
         )
+        if rels:
+            derived = set(derived_relations)
+            rels = [rel for rel in rels if rel in derived]
         return rels or derived_relations
 
     def _compute_relation_frequency(self) -> Dict[str, int]:
@@ -416,6 +451,113 @@ class KnowledgeGraphAgent:
             for rel, tails in head_rels.items():
                 freq[rel] += len(tails)
         return dict(freq)
+
+    def _build_relation_ngram_prior(self) -> Optional[Dict[str, Any]]:
+        if not self.hrg or self.relation_ngram_prior_order <= 0:
+            return None
+
+        unigrams: Counter[Tuple[str, ...]] = Counter()
+        bigrams: Counter[Tuple[str, ...]] = Counter()
+        trigrams: Counter[Tuple[str, ...]] = Counter()
+        prefix_1: Counter[Tuple[str, ...]] = Counter()
+        prefix_2: Counter[Tuple[str, ...]] = Counter()
+        vocab: Set[str] = set()
+
+        for rule in self.hrg.grammar:
+            labels = [rel for _, rel, _ in self.hrg._extract_terminal_edges(rule) if rel]
+            if not labels:
+                continue
+            weight = self._safe_float(rule.get("probability", rule.get("count", 1)), 1.0)
+            for rel in labels:
+                vocab.add(rel)
+                unigrams[(rel,)] += weight
+            for rel_a, rel_b in zip(labels, labels[1:]):
+                bigrams[(rel_a, rel_b)] += weight
+                prefix_1[(rel_a,)] += weight
+            for rel_a, rel_b, rel_c in zip(labels, labels[1:], labels[2:]):
+                trigrams[(rel_a, rel_b, rel_c)] += weight
+                prefix_2[(rel_a, rel_b)] += weight
+
+        if not unigrams:
+            return None
+
+        prior = {
+            "unigrams": unigrams,
+            "bigrams": bigrams,
+            "trigrams": trigrams,
+            "prefix_1": prefix_1,
+            "prefix_2": prefix_2,
+            "vocab": vocab,
+            "total_unigrams": sum(unigrams.values()),
+        }
+        print(
+            "[RelationNgramPrior] "
+            f"order={self.relation_ngram_prior_order} "
+            f"vocab={len(vocab)} bigrams={len(bigrams)} trigrams={len(trigrams)}"
+        )
+        return prior
+
+    def _relation_ngram_log_unigram(self, rel: str) -> float:
+        prior = self._relation_ngram_prior
+        if not prior:
+            return 0.0
+        alpha = self.relation_ngram_prior_alpha
+        vocab_size = max(1, len(prior["vocab"]))
+        return math.log(
+            (prior["unigrams"].get((rel,), 0.0) + alpha)
+            / (prior["total_unigrams"] + alpha * vocab_size)
+        )
+
+    def _relation_ngram_log_bigram(self, rel_a: str, rel_b: str) -> float:
+        prior = self._relation_ngram_prior
+        if not prior:
+            return 0.0
+        alpha = self.relation_ngram_prior_alpha
+        vocab_size = max(1, len(prior["vocab"]))
+        return math.log(
+            (prior["bigrams"].get((rel_a, rel_b), 0.0) + alpha)
+            / (prior["prefix_1"].get((rel_a,), 0.0) + alpha * vocab_size)
+        )
+
+    def _relation_ngram_log_trigram(self, rel_a: str, rel_b: str, rel_c: str) -> float:
+        prior = self._relation_ngram_prior
+        if not prior:
+            return 0.0
+        alpha = self.relation_ngram_prior_alpha
+        vocab_size = max(1, len(prior["vocab"]))
+        return math.log(
+            (prior["trigrams"].get((rel_a, rel_b, rel_c), 0.0) + alpha)
+            / (prior["prefix_2"].get((rel_a, rel_b), 0.0) + alpha * vocab_size)
+        )
+
+    def _score_relation_ngram_prior(self, chain: List[str]) -> float:
+        if not self._relation_ngram_prior or self.relation_ngram_prior_order <= 0 or not chain:
+            return 0.0
+
+        order = self.relation_ngram_prior_order
+        if order <= 1 or len(chain) == 1:
+            vals = [self._relation_ngram_log_unigram(rel) for rel in chain]
+        elif order == 2 or len(chain) == 2:
+            vals = [self._relation_ngram_log_unigram(chain[0])]
+            vals.extend(self._relation_ngram_log_bigram(a, b) for a, b in zip(chain, chain[1:]))
+        else:
+            vals = [
+                self._relation_ngram_log_unigram(chain[0]),
+                self._relation_ngram_log_bigram(chain[0], chain[1]),
+            ]
+            vals.extend(
+                self._relation_ngram_log_trigram(a, b, c)
+                for a, b, c in zip(chain, chain[1:], chain[2:])
+            )
+        return sum(vals) / len(vals) if vals else 0.0
+
+    def _add_relation_ngram_feature(self, grammar_features: Dict[str, Any], chain: List[str]) -> Dict[str, Any]:
+        if self.relation_ngram_prior_order <= 0:
+            return grammar_features
+        enriched = dict(grammar_features)
+        enriched["relation_ngram_score"] = self._score_relation_ngram_prior(chain)
+        enriched["relation_ngram_order"] = self.relation_ngram_prior_order
+        return enriched
 
     async def _inference(self, developer_instruction: str, user_content: str) -> str:
         return await self.llm.inference(developer_instruction, user_content)
@@ -557,6 +699,53 @@ class KnowledgeGraphAgent:
                 return self._node_index[key]
 
         return self._token_overlap_entity_fallback(entity)
+
+    def _extract_entity_candidates_from_question(self, user_prompt: str, limit: int = 8) -> List[str]:
+        """
+        Best-effort entity linker for fallback-only retrieval.
+
+        KQAPro questions are not bracketed like MetaQA, and parse failures often
+        leave us with no entity at all. Build contiguous n-grams from the
+        question and keep only phrases that resolve through the existing alias
+        index, preferring longer mentions.
+        """
+        normalized = self._normalize_match_text(user_prompt)
+        tokens = normalized.split()
+        candidates: List[Tuple[int, int, str]] = []
+        seen_nodes: Set[str] = set()
+
+        max_n = min(8, len(tokens))
+        for n in range(max_n, 0, -1):
+            for start in range(0, len(tokens) - n + 1):
+                phrase_tokens = tokens[start:start + n]
+                if all(tok in self.QUESTION_ENTITY_STOPWORDS for tok in phrase_tokens):
+                    continue
+                if n == 1 and len(phrase_tokens[0]) < 4:
+                    continue
+
+                phrase = " ".join(phrase_tokens)
+                lookup_keys = [
+                    phrase,
+                    phrase.replace(" ", "_"),
+                    phrase.replace(" ", ""),
+                ]
+                node = None
+                for key in lookup_keys:
+                    if key in self._node_index:
+                        node = self._node_index[key]
+                        break
+                if not node or node in seen_nodes:
+                    continue
+
+                seen_nodes.add(node)
+                candidates.append((n, len(phrase), node))
+                if len(candidates) >= limit * 2:
+                    break
+            if len(candidates) >= limit * 2:
+                break
+
+        candidates.sort(key=lambda x: (-x[0], -x[1], x[2]))
+        return [node for _, _, node in candidates[:limit]]
 
     def _fuzzy_match_relation(self, raw: str) -> Optional[str]:
         if raw in self.allowed_rel_tokens:
@@ -1105,6 +1294,8 @@ class KnowledgeGraphAgent:
             "ordered_path_hit": 0,
             "weak_label_match": 0,
             "matched_count": 0,
+            "relation_ngram_score": 0.0,
+            "relation_ngram_order": 0,
         }
 
     def _rule_terminal_count(self, rule: Dict[str, Any]) -> int:
@@ -1506,7 +1697,12 @@ class KnowledgeGraphAgent:
         overlap = len(question_terms & rel_terms)
         contains = sum(1 for term in question_terms if len(term) >= 3 and term in rel_match_text)
         preferred_bonus = 4.0 if rel_token in preferred_bare_rels else 0.0
-        return overlap * 8.0 + contains * 2.0 + preferred_bonus + min(edge_count, 10) * 0.1
+        low_info_penalty = 0.0
+        if rel_token in self.LOW_INFORMATION_RELATIONS and overlap == 0 and preferred_bonus == 0.0:
+            low_info_penalty = 10.0
+        if rel_token.endswith(self.STATEMENT_RELATION_SUFFIX) and overlap == 0 and preferred_bonus == 0.0:
+            low_info_penalty = max(low_info_penalty, 4.0)
+        return overlap * 8.0 + contains * 2.0 + preferred_bonus + min(edge_count, 10) * 0.1 - low_info_penalty
 
     def _actual_relation_options_from_frontier(
         self,
@@ -1610,12 +1806,14 @@ class KnowledgeGraphAgent:
                         if self.use_grammar_rerank
                         else self._empty_grammar_features()
                     )
+                    grammar_features = self._add_relation_ngram_feature(grammar_features, new_chain)
                     grammar_bonus = (
                         self._safe_int(grammar_features.get("same_arity_hit", 0), 0) * 5.0
                         + self._safe_int(grammar_features.get("ordered_path_hit", 0), 0) * 3.0
                         + self._safe_int(grammar_features.get("hit", 0), 0) * 2.0
                         + min(self._safe_int(grammar_features.get("matched_count", 0), 0), 20) * 0.1
                         + self._safe_float(grammar_features.get("score", 0.0), 0.0)
+                        + self._safe_float(grammar_features.get("relation_ngram_score", 0.0), 0.0)
                     )
                     compactness_penalty = min(len(next_frontier), 100) * 0.01
                     new_score = score + rel_score + grammar_bonus - compactness_penalty
@@ -1645,6 +1843,58 @@ class KnowledgeGraphAgent:
                 break
 
         return out
+
+    def _make_grammar_first_candidates(
+        self,
+        user_prompt: str,
+        top_k: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Grammar-first candidate generation.
+
+        This skips LLM-proposed relation chains. It only seeds topic entities, then
+        enumerates executable chains up to valid_chain_fallback_max_depth and lets
+        grammar/question relevance rank them.
+        """
+        top_k = top_k or self.valid_chain_fallback_topk
+        entity_seeds: List[str] = []
+        seen_entities: Set[str] = set()
+
+        bracket_entity = self._normalize_entity_from_question(user_prompt, None)
+        if bracket_entity and self._resolve_entity_to_kb(bracket_entity):
+            entity_seeds.append(bracket_entity)
+            seen_entities.add(self._resolve_entity_to_kb(bracket_entity) or bracket_entity)
+
+        for entity in self._extract_entity_candidates_from_question(user_prompt, limit=max(1, min(8, top_k))):
+            resolved = self._resolve_entity_to_kb(entity)
+            if not resolved or resolved in seen_entities:
+                continue
+            entity_seeds.append(entity)
+            seen_entities.add(resolved)
+            if len(entity_seeds) >= max(1, min(8, top_k)):
+                break
+
+        if not entity_seeds:
+            return [], 0
+
+        per_seed_top_k = max(1, math.ceil(top_k / max(1, len(entity_seeds))))
+        pool: List[Dict[str, Any]] = []
+        for entity in entity_seeds:
+            generated = self._make_deterministic_valid_chain_candidates(
+                user_prompt,
+                [{
+                    "entity": entity,
+                    "chain": [],
+                    "source": "grammar_first_seed",
+                    "confidence": 0.0,
+                }],
+                top_k=per_seed_top_k,
+            )
+            for cand in generated:
+                cand["source"] = "grammar_first"
+                pool.append(cand)
+
+        return self._dedup_candidates(pool)[:top_k], len(entity_seeds)
 
     # ============================================================
     # Serialization / Answer Generation
@@ -1801,9 +2051,12 @@ class KnowledgeGraphAgent:
         same_arity_hit = self._safe_int(grammar_features.get("same_arity_hit", 0), 0)
         ordered_path_hit = self._safe_int(grammar_features.get("ordered_path_hit", 0), 0)
         grammar_score = self._safe_float(grammar_features.get("score", 0.0), 0.0)
+        relation_ngram_score = self._safe_float(grammar_features.get("relation_ngram_score", 0.0), 0.0)
+        relation_ngram_enabled = 1 if self._safe_int(grammar_features.get("relation_ngram_order", 0), 0) > 0 else 0
         grammar_matched_count = min(self._safe_int(grammar_features.get("matched_count", 0), 0), 20)
         step_survival = sum(min(self._safe_int(s, 0), 10) for s in step_sizes)
         final_size = min(self._safe_int(kb_result.get("final_size", 0), 0), 20)
+        low_information_chain = 1 if chain and all(rel in self.LOW_INFORMATION_RELATIONS for rel in chain) else 0
 
         source_priority = 0
         if source == "llm":
@@ -1811,6 +2064,8 @@ class KnowledgeGraphAgent:
         elif source == "llm_correction":
             source_priority = 2
         elif source == "kg_valid_fallback":
+            source_priority = 2
+        elif source == "grammar_first":
             source_priority = 2
         elif source == "grammar_fallback":
             source_priority = 0
@@ -1822,11 +2077,14 @@ class KnowledgeGraphAgent:
         return (
             valid,
             self._safe_float(llm_rerank_score, 0.0),
+            relation_ngram_enabled,
+            relation_ngram_score,
             same_arity_hit,
             ordered_path_hit,
             grammar_hit,
             grammar_score,
             grammar_matched_count,
+            -low_information_chain,
             failure_progress,
             step_survival,
             final_size,
@@ -2149,16 +2407,112 @@ class KnowledgeGraphAgent:
         total_t0 = time.perf_counter()
         parse_latency = 0.0
         retrieval_latency = 0.0
+        correction_tokens = 0
 
-        parse_t0 = time.perf_counter()
-        candidates, p1_tokens = await self._parse_intent_candidates(user_prompt, self.num_candidates)
-        parse_latency += time.perf_counter() - parse_t0
-        print(f"[Parse 1] got {len(candidates)} candidates | tokens~{p1_tokens}", flush=True)
+        if self.use_grammar_first_retrieval:
+            p1_tokens = 0
+            gen_t0 = time.perf_counter()
+            candidates, entity_seed_count = self._make_grammar_first_candidates(
+                user_prompt,
+                top_k=self.valid_chain_fallback_topk,
+            )
+            retrieval_latency += time.perf_counter() - gen_t0
+            print(
+                f"[GrammarFirst] entity_seeds={entity_seed_count} "
+                f"generated {len(candidates)} KG-valid candidates | tokens~0",
+                flush=True,
+            )
+            if self.use_valid_chain_llm_rerank and len(candidates) > 1:
+                rerank_t0 = time.perf_counter()
+                for idx, cand in enumerate(candidates):
+                    cand["_grammar_first_idx"] = idx
+                    cand["kb_result"] = self._check_chain_validity(cand["entity"], cand["chain"])
+                rerank_order, rerank_tokens = await self._rerank_valid_chain_candidates_with_llm(
+                    user_prompt,
+                    candidates,
+                )
+                parse_latency += time.perf_counter() - rerank_t0
+                correction_tokens += rerank_tokens
+                order_pos = {idx: pos for pos, idx in enumerate(rerank_order)}
+                denom = max(len(candidates) - 1, 1)
+                for cand in candidates:
+                    idx = int(cand.get("_grammar_first_idx", 0))
+                    cand["llm_rerank_score"] = 1.0 - (order_pos.get(idx, len(candidates)) / denom)
+                candidates.sort(
+                    key=lambda cand: (
+                        order_pos.get(cand.get("_grammar_first_idx", 0), len(candidates)),
+                        cand.get("_grammar_first_idx", 0),
+                    )
+                )
+                print(f"[GrammarFirst] LLM reranked KG-valid candidates | tokens~{rerank_tokens}", flush=True)
+        else:
+            parse_t0 = time.perf_counter()
+            candidates, p1_tokens = await self._parse_intent_candidates(user_prompt, self.num_candidates)
+            parse_latency += time.perf_counter() - parse_t0
+            print(f"[Parse 1] got {len(candidates)} candidates | tokens~{p1_tokens}", flush=True)
+
+        if not candidates and not self.use_grammar_first_retrieval:
+            fallback_entities = self._extract_entity_candidates_from_question(user_prompt)
+            fallback_pool = []
+            if self.use_deterministic_valid_chain_fallback and fallback_entities:
+                seed_candidates = [
+                    {
+                        "entity": entity,
+                        "chain": [],
+                        "source": "question_entity_fallback",
+                        "confidence": 0.0,
+                    }
+                    for entity in fallback_entities
+                ]
+                for seed in seed_candidates:
+                    fallback_pool.extend(
+                        self._make_deterministic_valid_chain_candidates(
+                            user_prompt,
+                            [seed],
+                            top_k=max(1, self.valid_chain_fallback_topk // max(1, len(seed_candidates))),
+                        )
+                    )
+                candidates = self._dedup_candidates(fallback_pool)[: self.valid_chain_fallback_topk]
+                print(
+                    f"[Fallback] Parse produced no candidates; entity fallback found "
+                    f"{len(fallback_entities)} entities and {len(candidates)} KG-valid candidates.",
+                    flush=True,
+                )
+
+            if not candidates:
+                return {
+                    "status": "no_candidates",
+                    "answer": "No valid candidate relation chains parsed.",
+                    "selected_entity": None,
+                    "selected_chain": [],
+                    "edges": [],
+                    "candidates": [],
+                    "matched_rules": [],
+                    "token_usage": {
+                        "parse1_tokens": p1_tokens,
+                        "correction_tokens": 0,
+                    },
+                    "retrieval_recall": 0.0,
+                    "retrieval_precision": 0.0,
+                    "retrieval_f1": 0.0,
+                    "subgraph_size": 0,
+                    "grammar_hit": False,
+                    "has_references": bool(references),
+                    "references": references or [],
+                    "spine_edges": [],
+                    "expanded_edges": [],
+                    "retrieval_policy": "none",
+                    "expansion_gate": "no_candidates",
+                    "selected_candidate": {},
+                    "parse_latency": parse_latency,
+                    "retrieval_latency": 0.0,
+                    "total_prepare_latency": time.perf_counter() - total_t0,
+                }
 
         if not candidates:
             return {
                 "status": "no_candidates",
-                "answer": "No valid candidate relation chains parsed.",
+                "answer": "No valid candidate relation chains generated.",
                 "selected_entity": None,
                 "selected_chain": [],
                 "edges": [],
@@ -2166,7 +2520,7 @@ class KnowledgeGraphAgent:
                 "matched_rules": [],
                 "token_usage": {
                     "parse1_tokens": p1_tokens,
-                    "correction_tokens": 0,
+                    "correction_tokens": correction_tokens,
                 },
                 "retrieval_recall": 0.0,
                 "retrieval_precision": 0.0,
@@ -2181,7 +2535,7 @@ class KnowledgeGraphAgent:
                 "expansion_gate": "no_candidates",
                 "selected_candidate": {},
                 "parse_latency": parse_latency,
-                "retrieval_latency": 0.0,
+                "retrieval_latency": retrieval_latency,
                 "total_prepare_latency": time.perf_counter() - total_t0,
             }
 
@@ -2199,12 +2553,16 @@ class KnowledgeGraphAgent:
                 if self.use_grammar_rerank
                 else self._empty_grammar_features()
             )
+            grammar_features = self._add_relation_ngram_feature(grammar_features, chain)
             grammar_score = grammar_features["score"]
             source = cand.get("source", "llm")
-            confidence = float(cand.get("confidence", 0.0) or 0.0)
+            llm_rerank_score = float(cand.get("llm_rerank_score", 0.0) or 0.0)
+            confidence = max(float(cand.get("confidence", 0.0) or 0.0), llm_rerank_score)
             ranking_key = self._score_candidate(
                 entity, chain, kb_result, grammar_features, rank_idx,
-                llm_confidence=confidence, source=source
+                llm_confidence=confidence,
+                llm_rerank_score=llm_rerank_score,
+                source=source,
             )
             row = {
                 "entity": entity,
@@ -2220,14 +2578,15 @@ class KnowledgeGraphAgent:
                 "grammar_ordered_path_hit": grammar_features["ordered_path_hit"],
                 "grammar_weak_label_match": grammar_features["weak_label_match"],
                 "grammar_matched_count": grammar_features["matched_count"],
-                "llm_rerank_score": 0.0,
+                "relation_ngram_score": grammar_features.get("relation_ngram_score", 0.0),
+                "relation_ngram_order": grammar_features.get("relation_ngram_order", 0),
+                "llm_rerank_score": llm_rerank_score,
                 "ranking_key": ranking_key,
             }
             ranked_candidates.append(row)
             if not kb_result["valid"]:
                 failed_candidates.append(row)
 
-        correction_tokens = 0
         if self.use_fallback_correction and ranked_candidates and not any(c["kb_result"]["valid"] for c in ranked_candidates):
             print("[Fallback] All initial candidates failed. Trying correction...", flush=True)
             correction_pool = []
@@ -2256,6 +2615,7 @@ class KnowledgeGraphAgent:
                     if self.use_grammar_rerank
                     else self._empty_grammar_features()
                 )
+                grammar_features = self._add_relation_ngram_feature(grammar_features, chain)
                 grammar_score = grammar_features["score"]
                 source = cand.get("source", "correction")
                 confidence = float(cand.get("confidence", 0.0) or 0.0)
@@ -2277,6 +2637,8 @@ class KnowledgeGraphAgent:
                     "grammar_ordered_path_hit": grammar_features["ordered_path_hit"],
                     "grammar_weak_label_match": grammar_features["weak_label_match"],
                     "grammar_matched_count": grammar_features["matched_count"],
+                    "relation_ngram_score": grammar_features.get("relation_ngram_score", 0.0),
+                    "relation_ngram_order": grammar_features.get("relation_ngram_order", 0),
                     "llm_rerank_score": 0.0,
                     "ranking_key": ranking_key,
                 })
@@ -2352,6 +2714,7 @@ class KnowledgeGraphAgent:
                     if self.use_grammar_rerank
                     else self._empty_grammar_features()
                 )
+                grammar_features = self._add_relation_ngram_feature(grammar_features, chain)
                 grammar_score = grammar_features["score"]
                 source = cand.get("source", "kg_valid_fallback")
                 fallback_idx = int(cand.get("_fallback_idx", idx))
@@ -2378,6 +2741,8 @@ class KnowledgeGraphAgent:
                     "grammar_ordered_path_hit": grammar_features["ordered_path_hit"],
                     "grammar_weak_label_match": grammar_features["weak_label_match"],
                     "grammar_matched_count": grammar_features["matched_count"],
+                    "relation_ngram_score": grammar_features.get("relation_ngram_score", 0.0),
+                    "relation_ngram_order": grammar_features.get("relation_ngram_order", 0),
                     "ranking_key": ranking_key,
                 })
 

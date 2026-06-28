@@ -9,12 +9,15 @@ from typing import Dict, List, Tuple
 ROOT_DIR = Path(__file__).resolve().parent
 DATASETS_DIR = ROOT_DIR / "Datasets"
 CONFIGS_DIR = ROOT_DIR / "configs"
+
 UNSUPPORTED_KB_PLACEHOLDER = "# requires external benchmark-ready KB/triples file"
 UNSUPPORTED_KB_JSON_PLACEHOLDER = "# bundled kb.json is not compatible with the current line-based triple loader"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate portable_runner dataset configs and launchers.")
+    parser = argparse.ArgumentParser(
+        description="Generate portable_runner dataset configs and launchers."
+    )
     parser.add_argument("--datasets-dir", default=str(DATASETS_DIR))
     parser.add_argument("--configs-dir", default=str(CONFIGS_DIR))
     parser.add_argument("--overwrite", action="store_true")
@@ -44,16 +47,29 @@ def infer_jobs(datasets_dir: Path) -> List[Dict[str, str]]:
 
     wikimovies_root = datasets_dir / "WikiMovies"
     if wikimovies_root.exists():
-        wikimovies_kb_dir = wikimovies_root / "movieqa" / "knowledge_source" / "wiki_entities"
-        wikimovies_normalized_kb = wikimovies_kb_dir / "wiki_entities_kb_normalized.txt"
-        wikimovies_raw_kb = wikimovies_kb_dir / "wiki_entities_kb.txt"
+        wikimovies_kb_dir = (
+            wikimovies_root / "movieqa" / "knowledge_source" / "wiki_entities"
+        )
+
+        wikimovies_normalized_kb = (
+            wikimovies_kb_dir / "wiki_entities_kb_normalized.txt"
+        )
+
+        wikimovies_raw_kb = (
+            wikimovies_kb_dir / "wiki_entities_kb.txt"
+        )
+
         jobs.append(
             {
                 "name": "wikimovies",
                 "dataset": "wikimovies",
                 "split": "test",
                 "dataset_root": str(wikimovies_root),
-                "kb_path": str(wikimovies_normalized_kb if wikimovies_normalized_kb.exists() else wikimovies_raw_kb),
+                "kb_path": str(
+                    wikimovies_normalized_kb
+                    if wikimovies_normalized_kb.exists()
+                    else wikimovies_raw_kb
+                ),
                 "relation_path": "",
                 "extra": "WIKIMOVIES_SUBSET=wiki_entities\nRUN_GRAMMAR=1\n",
             }
@@ -68,11 +84,23 @@ def infer_jobs(datasets_dir: Path) -> List[Dict[str, str]]:
                 "split": "test",
                 "dataset_root": str(mlpq_root),
                 "kb_path": str(
-                    mlpq_root / "datasets" / "KGs" / "fusion_bilingual_KGs" / "ILLs_fusion" / "merged_ILLs_KG_en_zh.txt"
+                    mlpq_root
+                    / "datasets"
+                    / "KGs"
+                    / "fusion_bilingual_KGs"
+                    / "ILLs_fusion"
+                    / "merged_ILLs_KG_en_zh.txt"
                 ),
                 "relation_path": "",
-                "extra": "MLPQ_PAIR=en-zh\nMLPQ_QUESTION_LANG=en\nMLPQ_FUSION=ills\nRUN_GRAMMAR=1\n",
-                "alias_path": str(ROOT_DIR / "configs" / "mlpq_aliases.json"),
+                "extra": (
+                    "MLPQ_PAIR=en-zh\n"
+                    "MLPQ_QUESTION_LANG=en\n"
+                    "MLPQ_FUSION=ills\n"
+                    "RUN_GRAMMAR=1\n"
+                ),
+                "alias_path": str(
+                    ROOT_DIR / "configs" / "mlpq_aliases.json"
+                ),
             }
         )
 
@@ -82,14 +110,18 @@ def infer_jobs(datasets_dir: Path) -> List[Dict[str, str]]:
         ("KQAPro", "kqapro", "validation"),
         ("Mintaka", "mintaka", "test"),
     ]
+
     for dir_name, dataset_key, split in normalized_jobs:
         dataset_root = datasets_dir / dir_name
         normalized_file = dataset_root / "normalized" / f"{split}.jsonl"
+
         if normalized_file.exists():
+
             if dataset_key == "kqapro":
                 kb_path = str(dataset_root / "kqapro_kb_triples.tsv")
             else:
                 kb_path = UNSUPPORTED_KB_PLACEHOLDER
+
             jobs.append(
                 {
                     "name": dataset_key,
@@ -106,23 +138,51 @@ def infer_jobs(datasets_dir: Path) -> List[Dict[str, str]]:
     return jobs
 
 
-def maybe_comment_missing(path_str: str) -> str:
-    if not path_str:
-        return ""
-    if path_str.startswith("#"):
-        return path_str
-    path = Path(path_str)
-    return path_str if path.exists() else f"# missing locally: {path_str}"
+def build_env_assignment(key: str, value: str) -> List[str]:
+    """
+    Generate safe bash-style env assignment lines.
+
+    Examples:
+
+    existing file:
+        KB_PATH=/path/to/file
+
+    missing file:
+        # missing locally: /path/to/file
+        KB_PATH=
+
+    empty:
+        KB_PATH=
+    """
+
+    if not value:
+        return [f"{key}="]
+
+    if value.startswith("#"):
+        return [value, f"{key}="]
+
+    path = Path(value)
+
+    if path.exists():
+        return [f"{key}={value}"]
+
+    return [
+        f"# missing locally: {value}",
+        f"{key}=",
+    ]
 
 
 def build_config_text(job: Dict[str, str]) -> str:
-    lines = [
+    lines: List[str] = [
         "# Auto-generated by generate_configs.py",
         "PYTHON_BIN=",
         f"DATASET={job['dataset']}",
         f"SPLIT={job['split']}",
-        f"KB_PATH={maybe_comment_missing(job['kb_path'])}",
     ]
+
+    lines.extend(
+        build_env_assignment("KB_PATH", job.get("kb_path", ""))
+    )
 
     dataset_root = job.get("dataset_root", "")
     dataset_file = job.get("dataset_file", "")
@@ -144,12 +204,28 @@ def build_config_text(job: Dict[str, str]) -> str:
             "CUSTOM_DATASET_NAME=",
             "CUSTOM_FORMAT=jsonl",
             "CUSTOM_HOP=1",
-            f"RELATION_PATH={maybe_comment_missing(relation_path) if relation_path else ''}",
-            f"ALIAS_PATH={maybe_comment_missing(alias_path) if alias_path else ''}",
+            "GRAMMAR_KB_PATH=",
+        ]
+    )
+
+    lines.extend(
+        build_env_assignment("RELATION_PATH", relation_path)
+    )
+
+    lines.extend(
+        build_env_assignment("ALIAS_PATH", alias_path)
+    )
+
+    lines.extend(
+        [
             "GRAMMAR_PATH=",
             "RUN_GRAMMAR=1",
             "SAMPLE_LIMIT=200",
             "MODEL_FILTER=",
+            "KB_ABLATION_MODE=none",
+            "KB_ABLATION_RATIO=0",
+            "KB_ABLATION_SEED=0",
+            "RUN_TAG_SUFFIX=",
             "OUTPUT_FILE=",
             "DETAIL_CSV=",
             "CUDA_VISIBLE_DEVICES=0,1",
@@ -160,6 +236,7 @@ def build_config_text(job: Dict[str, str]) -> str:
     )
 
     extra = job.get("extra", "").strip()
+
     if extra:
         lines.append(extra)
 
@@ -178,31 +255,58 @@ def build_launcher_text(config_path: Path) -> str:
     )
 
 
-def write_if_needed(path: Path, content: str, overwrite: bool) -> None:
+def write_if_needed(
+    path: Path,
+    content: str,
+    overwrite: bool,
+) -> None:
+
     if path.exists() and not overwrite:
         return
+
     ensure_dir(path.parent)
+
     path.write_text(content, encoding="utf-8")
 
 
 def main() -> int:
     args = parse_args()
+
     datasets_dir = Path(args.datasets_dir).resolve()
     configs_dir = Path(args.configs_dir).resolve()
+
     ensure_dir(configs_dir)
 
     jobs = infer_jobs(datasets_dir)
+
     for job in jobs:
+
         config_path = configs_dir / f"config.{job['name']}.env"
-        launcher_path = configs_dir / f"run_{job['name']}.sh"
-        write_if_needed(config_path, build_config_text(job), args.overwrite)
-        write_if_needed(launcher_path, build_launcher_text(config_path), args.overwrite)
+
+        launcher_path = (
+            configs_dir / f"run_{job['name']}.sh"
+        )
+
+        write_if_needed(
+            config_path,
+            build_config_text(job),
+            args.overwrite,
+        )
+
+        write_if_needed(
+            launcher_path,
+            build_launcher_text(config_path),
+            args.overwrite,
+        )
+
         launcher_path.chmod(0o755)
+
         print(f"[config] {config_path}")
         print(f"[launch] {launcher_path}")
 
     if not jobs:
         print("[config] no known datasets found under Datasets/")
+
     return 0
 
 

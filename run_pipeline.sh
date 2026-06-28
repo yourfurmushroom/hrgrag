@@ -56,6 +56,13 @@ MLPQ_KB_LANG="${MLPQ_KB_LANG:-auto}"
 CUSTOM_DATASET_NAME="${CUSTOM_DATASET_NAME:-custom}"
 CUSTOM_FORMAT="${CUSTOM_FORMAT:-auto}"
 CUSTOM_HOP="${CUSTOM_HOP:-1}"
+GRAMMAR_KB_PATH="${GRAMMAR_KB_PATH:-}"
+KB_ABLATION_MODE="${KB_ABLATION_MODE:-none}"
+KB_ABLATION_RATIO="${KB_ABLATION_RATIO:-0}"
+KB_ABLATION_SEED="${KB_ABLATION_SEED:-0}"
+RUN_TAG_SUFFIX="${RUN_TAG_SUFFIX:-}"
+FIXED_ABLATION_BUDGET="${FIXED_ABLATION_BUDGET:-0}"
+RETRY_FAILED="${RETRY_FAILED:-0}"
 
 export CUDA_VISIBLE_DEVICES
 export TARGET_DEVICE
@@ -84,12 +91,14 @@ require_file() {
 }
 
 build_run_tag() {
+  local suffix="$RUN_TAG_SUFFIX"
+  local base=""
   case "$DATASET" in
     metaqa)
-      printf 'metaqa-%s-%s' "$METAQA_VARIANT" "$SPLIT"
+      base=$(printf 'metaqa-%s-%s' "$METAQA_VARIANT" "$SPLIT")
       ;;
     wikimovies)
-      printf 'wikimovies-%s-%s' "$WIKIMOVIES_SUBSET" "$SPLIT"
+      base=$(printf 'wikimovies-%s-%s' "$WIKIMOVIES_SUBSET" "$SPLIT")
       ;;
     mlpq)
       if [[ "${MLPQ_KB_MODE,,}" == "monolingual" ]]; then
@@ -97,22 +106,28 @@ build_run_tag() {
         if [[ "$mono_lang" == "auto" || -z "$mono_lang" ]]; then
           mono_lang="${MLPQ_QUESTION_LANG,,}"
         fi
-        printf 'mlpq-%s-%s-%s-mono-%s' "$MLPQ_PAIR" "$MLPQ_QUESTION_LANG" "$MLPQ_FUSION" "$mono_lang"
+        base=$(printf 'mlpq-%s-%s-%s-mono-%s' "$MLPQ_PAIR" "$MLPQ_QUESTION_LANG" "$MLPQ_FUSION" "$mono_lang")
       else
-        printf 'mlpq-%s-%s-%s' "$MLPQ_PAIR" "$MLPQ_QUESTION_LANG" "$MLPQ_FUSION"
+        base=$(printf 'mlpq-%s-%s-%s' "$MLPQ_PAIR" "$MLPQ_QUESTION_LANG" "$MLPQ_FUSION")
       fi
       ;;
     wqsp|cwq|kqapro|mintaka)
-      printf '%s-%s' "$DATASET" "${SPLIT,,}"
+      base=$(printf '%s-%s' "$DATASET" "${SPLIT,,}")
       ;;
     custom)
       local safe_name="${CUSTOM_DATASET_NAME// /-}"
-      printf 'custom-%s-%s' "${safe_name,,}" "${SPLIT,,}"
+      base=$(printf 'custom-%s-%s' "${safe_name,,}" "${SPLIT,,}")
       ;;
     *)
       fail "Unsupported DATASET: $DATASET"
       ;;
   esac
+  if [[ -n "$suffix" ]]; then
+    suffix="$(printf '%s' "$suffix" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')"
+    printf '%s-%s' "$base" "$suffix"
+  else
+    printf '%s' "$base"
+  fi
 }
 
 RUN_TAG="$(build_run_tag)"
@@ -167,9 +182,14 @@ if [[ -z "${KB_PATH:-}" ]]; then
 fi
 
 require_file "${KB_PATH:-}" "KB_PATH"
+if [[ -n "$GRAMMAR_KB_PATH" ]]; then
+  require_file "$GRAMMAR_KB_PATH" "GRAMMAR_KB_PATH"
+fi
+
+EFFECTIVE_GRAMMAR_KB_PATH="${GRAMMAR_KB_PATH:-$KB_PATH}"
 
 GRAMMAR_ARGS=(
-  --kb-path "$KB_PATH"
+  --kb-path "$EFFECTIVE_GRAMMAR_KB_PATH"
   --dataset "$DATASET"
   --split "$SPLIT"
   --metaqa-variant "$METAQA_VARIANT"
@@ -196,6 +216,10 @@ BENCHMARK_ARGS=(
   --custom-dataset-name "$CUSTOM_DATASET_NAME"
   --custom-format "$CUSTOM_FORMAT"
   --custom-hop "$CUSTOM_HOP"
+  --kb-ablation-mode "$KB_ABLATION_MODE"
+  --kb-ablation-ratio "$KB_ABLATION_RATIO"
+  --kb-ablation-seed "$KB_ABLATION_SEED"
+  --run-tag-suffix "$RUN_TAG_SUFFIX"
   --kb-path "$KB_PATH"
   --grammar-path "$GRAMMAR_PATH"
   --artifacts-root "$ARTIFACTS_ROOT"
@@ -216,6 +240,14 @@ fi
 
 if [[ -n "$MODEL_FILTER" ]]; then
   BENCHMARK_ARGS+=(--model-filter "$MODEL_FILTER")
+fi
+
+if [[ "$FIXED_ABLATION_BUDGET" == "1" ]]; then
+  BENCHMARK_ARGS+=(--fixed-ablation-budget)
+fi
+
+if [[ "$RETRY_FAILED" == "1" ]]; then
+  BENCHMARK_ARGS+=(--retry-failed)
 fi
 
 case "$DATASET" in
