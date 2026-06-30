@@ -1,0 +1,66 @@
+{
+  "relations": {
+    "directed_by": [
+      "directed",
+      "director",
+      "directors",
+      "co-director",
+      "co-directors",
+      "listed as director"
+    ],
+    "has_genre": [
+      "genre",
+      "genres"
+    ],
+    "has_imdb_rating": [
+      "imdb rating",
+      "rating",
+      "ratings",
+      "rated"
+    ],
+    "has_imdb_votes": [
+      "imdb votes",
+      "votes",
+      "vote count"
+    ],
+    "has_tags": [
+      "tag",
+      "tags",
+      "topic",
+      "topics"
+    ],
+    "in_language": [
+      "language",
+      "languages",
+      "primary language",
+      "primary languages",
+      "spoken in"
+    ],
+    "release_year": [
+      "release year",
+      "release years",
+      "released",
+      "year",
+      "years"
+    ],
+    "starred_actors": [
+      "acted",
+      "actor",
+      "actors",
+      "appear",
+      "appears",
+      "cast",
+      "star",
+      "starred",
+      "starring"
+    ],
+    "written_by": [
+      "screenwriter",
+      "screenwriters",
+      "wrote",
+      "writer",
+      "writers",
+      "written"
+    ]
+  }
+}

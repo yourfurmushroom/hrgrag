@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="860" viewBox="0 0 1500 860">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#5f6b73"/>
+</marker>
+<filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+<feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#0f172a" flood-opacity="0.12"/>
+</filter>
+</defs>
+<rect x="0" y="0" width="1500" height="860" fill="white"/>
+<text x="40.0" y="42.0" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#172026" text-anchor="start">Example retrieval: BFS neighborhood vs HRG-guided evidence</text>
+<rect x="50.0" y="72.0" width="1400.0" height="72.0" rx="8.0" fill="#f7f9fb" stroke="#c8d1d8" stroke-width="1"/>
+<text x="80.0" y="116.0" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#172026" text-anchor="start">Question: which person directed the movies starred by [John Krasinski]</text>
+<rect x="60.0" y="180.0" width="660.0" height="560.0" rx="8.0" fill="#f8fafc" stroke="#c8d1d8" stroke-width="1"/>
+<text x="90.0" y="220.0" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#8b98a5" text-anchor="start">Baseline-BFS context</text>
+<text x="90.0" y="248.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#5f6b73" text-anchor="start">Collects all nearby facts under BFS depth</text>
+<rect x="500.0" y="205.0" width="100.0" height="30.0" rx="15.0" fill="#8b98a5" stroke="none" stroke-width="1"/>
+<text x="550.0" y="225.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">86 edges</text>
+<rect x="610.0" y="205.0" width="125.0" height="30.0" rx="15.0" fill="#8b98a5" stroke="none" stroke-width="1"/>
+<text x="672.5" y="225.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">1092 ctx tokens</text>
+<line x1="360.0" y1="455.0" x2="145.0" y2="325.0" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="199.3" y="365.0" width="106.4" height="24.0" rx="4.0" fill="white" stroke="#0f766e" stroke-width="1"/>
+<text x="252.5" y="382.0" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" fill="#0f766e" text-anchor="middle">starred_actors</text>
+<line x1="360.0" y1="455.0" x2="595.0" y2="325.0" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="429.5" y="365.0" width="96.0" height="24.0" rx="4.0" fill="white" stroke="#0f766e" stroke-width="1"/>
+<text x="477.5" y="382.0" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" fill="#0f766e" text-anchor="middle">directed_by</text>
+<line x1="150.0" y1="470.0" x2="145.0" y2="325.0" stroke="#94a3b8" stroke-width="1.7" stroke-linecap="round" marker-end="url(#arrow)"/>
+<line x1="170.0" y1="610.0" x2="145.0" y2="325.0" stroke="#94a3b8" stroke-width="1.7" stroke-linecap="round" marker-end="url(#arrow)"/>
+<line x1="370.0" y1="665.0" x2="145.0" y2="325.0" stroke="#94a3b8" stroke-width="1.7" stroke-linecap="round" marker-end="url(#arrow)"/>
+<line x1="360.0" y1="455.0" x2="605.0" y2="610.0" stroke="#94a3b8" stroke-width="1.7" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="282.5" y="434.0" width="155.0" height="42.0" rx="8.0" fill="#0f766e" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="360.0" y="460.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">Something Borrowed</text>
+<rect x="67.5" y="304.0" width="155.0" height="42.0" rx="8.0" fill="#0f766e" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="145.0" y="330.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">John Krasinski</text>
+<rect x="517.5" y="304.0" width="155.0" height="42.0" rx="8.0" fill="#0f766e" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="595.0" y="330.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">Luke Greenfield</text>
+<rect x="87.5" y="449.0" width="125.0" height="42.0" rx="8.0" fill="#94a3b8" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="150.0" y="475.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">Nobody Walks</text>
+<rect x="107.5" y="589.0" width="125.0" height="42.0" rx="8.0" fill="#94a3b8" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="170.0" y="615.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">Leatherheads</text>
+<rect x="307.5" y="644.0" width="125.0" height="42.0" rx="8.0" fill="#94a3b8" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="370.0" y="670.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">Away We Go</text>
+<rect x="542.5" y="589.0" width="125.0" height="42.0" rx="8.0" fill="#94a3b8" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="605.0" y="615.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">2011</text>
+<rect x="780.0" y="180.0" width="660.0" height="560.0" rx="8.0" fill="#f0fdfa" stroke="#99f6e4" stroke-width="1"/>
+<text x="810.0" y="220.0" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#7c3aed" text-anchor="start">HRG-Proposed context</text>
+<text x="810.0" y="248.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#5f6b73" text-anchor="start">Keeps compact evidence triples selected by KB + HRG signals</text>
+<rect x="1200.0" y="205.0" width="100.0" height="30.0" rx="15.0" fill="#0f766e" stroke="none" stroke-width="1"/>
+<text x="1250.0" y="225.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">11 edges</text>
+<rect x="1310.0" y="205.0" width="125.0" height="30.0" rx="15.0" fill="#0f766e" stroke="none" stroke-width="1"/>
+<text x="1372.5" y="225.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">257 ctx tokens</text>
+<line x1="1098.0" y1="390.0" x2="953.0" y2="390.0" stroke="#7c3aed" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="972.3" y="365.0" width="106.4" height="24.0" rx="4.0" fill="white" stroke="#7c3aed" stroke-width="1"/>
+<text x="1025.5" y="382.0" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" fill="#7c3aed" text-anchor="middle">starred_actors</text>
+<line x1="1098.0" y1="505.0" x2="1243.0" y2="505.0" stroke="#7c3aed" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="1122.5" y="480.0" width="96.0" height="24.0" rx="4.0" fill="white" stroke="#7c3aed" stroke-width="1"/>
+<text x="1170.5" y="497.0" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" fill="#7c3aed" text-anchor="middle">directed_by</text>
+<rect x="1097.5" y="369.0" width="165.0" height="42.0" rx="8.0" fill="#14b8a6" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1180.0" y="395.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">Something Borrowed</text>
+<rect x="797.5" y="369.0" width="155.0" height="42.0" rx="8.0" fill="#0f766e" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="875.0" y="395.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">John Krasinski</text>
+<rect x="932.5" y="484.0" width="165.0" height="42.0" rx="8.0" fill="#14b8a6" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1015.0" y="510.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">Something Borrowed</text>
+<rect x="1242.5" y="484.0" width="155.0" height="42.0" rx="8.0" fill="#0f766e" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1320.0" y="510.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">Luke Greenfield</text>
+<rect x="835.0" y="560.0" width="550.0" height="120.0" rx="8.0" fill="white" stroke="#99f6e4" stroke-width="1"/>
+<text x="860.0" y="595.0" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" fill="#0f766e" text-anchor="start">Printable structure</text>
+<text x="860.0" y="627.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">selected_entity = John Krasinski</text>
+<text x="860.0" y="656.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">relation labels = starred_actors, directed_by</text>
+<text x="860.0" y="685.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">answers from directed_by evidence</text>
+<rect x="280.0" y="752.0" width="940.0" height="48.0" rx="8.0" fill="#ecfdf5" stroke="#86efac" stroke-width="1"/>
+<text x="750.0" y="783.0" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#15803d" text-anchor="middle">Same question, compact context, explicit KB triples</text>
+</svg>

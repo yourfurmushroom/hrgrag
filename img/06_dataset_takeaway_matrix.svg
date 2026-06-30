@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="850" viewBox="0 0 1500 850">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#5f6b73"/>
+</marker>
+<filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+<feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#0f172a" flood-opacity="0.12"/>
+</filter>
+</defs>
+<rect x="0" y="0" width="1500" height="850" fill="white"/>
+<text x="40.0" y="42.0" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#172026" text-anchor="start">Where HRG-Proposed evidence is strong or limited</text>
+<rect x="80.0" y="150.0" width="1200.0" height="64.0" rx="8.0" fill="#172026" stroke="none" stroke-width="1"/>
+<text x="105.0" y="190.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="white" text-anchor="start">Dataset</text>
+<text x="315.0" y="190.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="white" text-anchor="start">Answer quality</text>
+<text x="555.0" y="190.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="white" text-anchor="start">Token reduction</text>
+<text x="835.0" y="190.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="white" text-anchor="start">How to present it</text>
+<rect x="80.0" y="222.0" width="1200.0" height="92.0" rx="8.0" fill="white" stroke="#c8d1d8" stroke-width="1" filter="url(#shadow)"/>
+<text x="105.0" y="270.0" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#172026" text-anchor="start">MetaQA</text>
+<rect x="315.0" y="246.0" width="160.0" height="30.0" rx="15.0" fill="#15803d" stroke="none" stroke-width="1"/>
+<text x="395.0" y="266.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">Usable</text>
+<rect x="555.0" y="246.0" width="205.0" height="30.0" rx="15.0" fill="#15803d" stroke="none" stroke-width="1"/>
+<text x="657.5" y="266.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">Very strong</text>
+<text x="835.0" y="256.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" fill="#172026" text-anchor="start">Main compression evidence</text>
+<rect x="80.0" y="332.0" width="1200.0" height="92.0" rx="8.0" fill="white" stroke="#c8d1d8" stroke-width="1" filter="url(#shadow)"/>
+<text x="105.0" y="380.0" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#172026" text-anchor="start">WikiMovies</text>
+<rect x="315.0" y="356.0" width="160.0" height="30.0" rx="15.0" fill="#f59e0b" stroke="none" stroke-width="1"/>
+<text x="395.0" y="376.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">Near ceiling</text>
+<rect x="555.0" y="356.0" width="205.0" height="30.0" rx="15.0" fill="#f59e0b" stroke="none" stroke-width="1"/>
+<text x="657.5" y="376.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">Small graph</text>
+<text x="835.0" y="366.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" fill="#172026" text-anchor="start">BFS already compact</text>
+<rect x="80.0" y="442.0" width="1200.0" height="92.0" rx="8.0" fill="white" stroke="#c8d1d8" stroke-width="1" filter="url(#shadow)"/>
+<text x="105.0" y="490.0" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#172026" text-anchor="start">MLPQ</text>
+<rect x="315.0" y="466.0" width="160.0" height="30.0" rx="15.0" fill="#c2410c" stroke="none" stroke-width="1"/>
+<text x="395.0" y="486.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">Hard case</text>
+<rect x="555.0" y="466.0" width="205.0" height="30.0" rx="15.0" fill="#c2410c" stroke="none" stroke-width="1"/>
+<text x="657.5" y="486.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">HRG helps evidence</text>
+<text x="835.0" y="476.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" fill="#172026" text-anchor="start">Cross-lingual relations</text>
+<rect x="80.0" y="552.0" width="1200.0" height="92.0" rx="8.0" fill="white" stroke="#c8d1d8" stroke-width="1" filter="url(#shadow)"/>
+<text x="105.0" y="600.0" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#172026" text-anchor="start">KQAPro</text>
+<rect x="315.0" y="576.0" width="160.0" height="30.0" rx="15.0" fill="#dc2626" stroke="none" stroke-width="1"/>
+<text x="395.0" y="596.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">Hard case</text>
+<rect x="555.0" y="576.0" width="205.0" height="30.0" rx="15.0" fill="#dc2626" stroke="none" stroke-width="1"/>
+<text x="657.5" y="596.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">HRG helps evidence</text>
+<text x="835.0" y="586.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" fill="#172026" text-anchor="start">Operators / qualifiers</text>
+<rect x="90.0" y="675.0" width="1290.0" height="90.0" rx="8.0" fill="#fff7ed" stroke="#fed7aa" stroke-width="1"/>
+<text x="125.0" y="710.0" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#c2410c" text-anchor="start">Recommended defense</text>
+<text x="125.0" y="745.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" fill="#172026" text-anchor="start">Use MetaQA for compression; use MLPQ/KQAPro to show HRG evidence coverage under hard semantics.</text>
+</svg>

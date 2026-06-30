@@ -41,6 +41,7 @@ def infer_jobs(datasets_dir: Path) -> List[Dict[str, str]]:
                 "dataset_root": str(metaqa_root),
                 "kb_path": str(metaqa_root / "kb.txt"),
                 "relation_path": str(metaqa_root / "relations.json"),
+                "alias_path": str(ROOT_DIR / "configs" / "metaqa_aliases.json"),
                 "extra": "METAQA_VARIANT=vanilla\nRUN_GRAMMAR=1\n",
             }
         )

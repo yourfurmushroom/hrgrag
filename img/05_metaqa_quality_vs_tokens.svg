@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="850" viewBox="0 0 1500 850">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#5f6b73"/>
+</marker>
+<filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+<feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#0f172a" flood-opacity="0.12"/>
+</filter>
+</defs>
+<rect x="0" y="0" width="1500" height="850" fill="white"/>
+<text x="40.0" y="42.0" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#172026" text-anchor="start">MetaQA quality-cost trade-off: answer-set F1 vs context</text>
+<rect x="90.0" y="120.0" width="1120.0" height="580.0" rx="8.0" fill="white" stroke="#c8d1d8" stroke-width="1"/>
+<text x="130.0" y="160.0" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" fill="#5f6b73" text-anchor="start">X = avg context tokens, Y = answer-set F1</text>
+<line x1="170.0" y1="210.0" x2="170.0" y2="630.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+<text x="170.0" y="658.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#5f6b73" text-anchor="middle">0</text>
+<line x1="376.5" y1="210.0" x2="376.5" y2="630.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+<text x="376.5" y="658.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#5f6b73" text-anchor="middle">1000</text>
+<line x1="583.0" y1="210.0" x2="583.0" y2="630.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+<text x="583.0" y="658.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#5f6b73" text-anchor="middle">2000</text>
+<line x1="789.6" y1="210.0" x2="789.6" y2="630.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+<text x="789.6" y="658.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#5f6b73" text-anchor="middle">3000</text>
+<line x1="996.1" y1="210.0" x2="996.1" y2="630.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+<text x="996.1" y="658.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#5f6b73" text-anchor="middle">4000</text>
+<line x1="170.0" y1="570.0" x2="1120.0" y2="570.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+<text x="152.0" y="575.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#5f6b73" text-anchor="end">0.56</text>
+<line x1="170.0" y1="510.0" x2="1120.0" y2="510.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+<text x="152.0" y="515.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#5f6b73" text-anchor="end">0.58</text>
+<line x1="170.0" y1="450.0" x2="1120.0" y2="450.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+<text x="152.0" y="455.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#5f6b73" text-anchor="end">0.60</text>
+<line x1="170.0" y1="390.0" x2="1120.0" y2="390.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+<text x="152.0" y="395.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#5f6b73" text-anchor="end">0.62</text>
+<line x1="170.0" y1="330.0" x2="1120.0" y2="330.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+<text x="152.0" y="335.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#5f6b73" text-anchor="end">0.64</text>
+<line x1="170.0" y1="270.0" x2="1120.0" y2="270.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+<text x="152.0" y="275.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#5f6b73" text-anchor="end">0.66</text>
+<circle cx="1082.0" cy="417.3" r="18.0" fill="#8b98a5" stroke="white" stroke-width="3" filter="url(#shadow)"/>
+<rect x="962.0" y="383.3" width="160.0" height="52.0" rx="6.0" fill="white" stroke="#8b98a5" stroke-width="1"/>
+<text x="974.0" y="405.3" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#8b98a5" text-anchor="start">BFS</text>
+<text x="974.0" y="426.3" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#172026" text-anchor="start">F1 0.6109, 4416 tok</text>
+<circle cx="213.8" cy="263.4" r="18.0" fill="#0f766e" stroke="white" stroke-width="3" filter="url(#shadow)"/>
+<rect x="238.8" y="229.4" width="160.0" height="52.0" rx="6.0" fill="white" stroke="#0f766e" stroke-width="1"/>
+<text x="250.8" y="251.4" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#0f766e" text-anchor="start">Spine JSON</text>
+<text x="250.8" y="272.4" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#172026" text-anchor="start">F1 0.6622, 212 tok</text>
+<circle cx="186.0" cy="534.6" r="18.0" fill="#7c3aed" stroke="white" stroke-width="3" filter="url(#shadow)"/>
+<rect x="211.0" y="500.6" width="160.0" height="52.0" rx="6.0" fill="white" stroke="#7c3aed" stroke-width="1"/>
+<text x="223.0" y="522.6" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#7c3aed" text-anchor="start">HRG Triple</text>
+<text x="223.0" y="543.6" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#172026" text-anchor="start">F1 0.5718, 77 tok</text>
+<line x1="170.0" y1="630.0" x2="1120.0" y2="630.0" stroke="#172026" stroke-width="2" stroke-linecap="round"/>
+<line x1="170.0" y1="210.0" x2="170.0" y2="630.0" stroke="#172026" stroke-width="2" stroke-linecap="round"/>
+<text x="645.0" y="690.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#172026" text-anchor="middle">Average context tokens</text>
+<text x="110.0" y="415.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#172026" text-anchor="middle">F1</text>
+<rect x="1240.0" y="160.0" width="210.0" height="440.0" rx="8.0" fill="#f0fdfa" stroke="#99f6e4" stroke-width="1"/>
+<text x="1265.0" y="200.0" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#0f766e" text-anchor="start">Takeaway</text>
+<text x="1265.0" y="245.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Main claim:</text>
+<text x="1265.0" y="270.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">quality-cost</text>
+<text x="1265.0" y="295.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">trade-off.</text>
+<text x="1265.0" y="320.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start"></text>
+<text x="1265.0" y="345.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Report F1,</text>
+<text x="1265.0" y="370.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">evidence, and</text>
+<text x="1265.0" y="395.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">tokens together.</text>
+</svg>

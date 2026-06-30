@@ -1,0 +1,68 @@
+
+\documentclass[tikz,border=12pt]{standalone}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\definecolor{ink}{HTML}{172026}
+\definecolor{muted}{HTML}{5F6B73}
+\definecolor{line}{HTML}{CBD5E1}
+\definecolor{panel}{HTML}{F8FAFC}
+\definecolor{bfs}{HTML}{64748B}
+\definecolor{spine}{HTML}{0F766E}
+\definecolor{hrg}{HTML}{7C3AED}
+\definecolor{warn}{HTML}{C2410C}
+\definecolor{ok}{HTML}{15803D}
+\definecolor{blue}{HTML}{2563EB}
+\pgfplotsset{
+  every axis/.append style={
+    tick label style={font=\small, color=ink},
+    label style={font=\small, color=ink},
+    title style={font=\bfseries\small, color=ink},
+    legend style={font=\footnotesize, draw=none, fill=none},
+    grid=major,
+    grid style={line!55},
+    axis line style={line},
+  }
+}
+\begin{document}
+
+\begin{tikzpicture}
+\begin{axis}[
+  width=15.5cm,
+  height=6.7cm,
+  xmin=0, xmax=30,
+  ymin=0, ymax=580,
+  xlabel={Node drop ratio (\%)},
+  ylabel={Extracted rule count},
+  title={Offline HRG rule count under node deletion},
+  legend columns=4,
+  legend style={at={(0.5,-0.18)}, anchor=north, font=\footnotesize},
+]
+\addplot+[mark=*, thick, color=hrg] coordinates {(0,304) (10,326) (20,368) (30,433)};
+\addplot+[mark=square*, thick, color=spine] coordinates {(0,335) (10,314) (20,360) (30,376)};
+\addplot+[mark=triangle*, thick, color=blue] coordinates {(0,398) (10,467) (20,453) (30,526)};
+\addplot+[mark=diamond*, thick, color=warn] coordinates {(0,187) (10,343) (20,350) (30,288)};
+\legend{MetaQA,WikiMovies,MLPQ,KQAPro}
+\end{axis}
+\begin{axis}[
+  xshift=0cm,
+  yshift=-8.1cm,
+  width=15.5cm,
+  height=6.7cm,
+  xmin=0, xmax=30,
+  ymin=0, ymax=1.12,
+  xlabel={Node drop ratio (\%)},
+  ylabel={Retained clean relations},
+  title={Relation vocabulary retention under node deletion},
+  legend columns=4,
+  legend style={at={(0.5,-0.18)}, anchor=north, font=\footnotesize},
+]
+\addplot+[mark=*, thick, color=hrg] coordinates {(0,1.000) (10,1.000) (20,1.000) (30,0.889)};
+\addplot+[mark=square*, thick, color=spine] coordinates {(0,1.000) (10,0.900) (20,1.000) (30,1.000)};
+\addplot+[mark=triangle*, thick, color=blue] coordinates {(0,1.000) (10,0.443) (20,0.458) (30,0.523)};
+\addplot+[mark=diamond*, thick, color=warn] coordinates {(0,1.000) (10,0.597) (20,0.550) (30,0.487)};
+\legend{MetaQA,WikiMovies,MLPQ,KQAPro}
+\end{axis}
+\end{tikzpicture}
+
+\end{document}

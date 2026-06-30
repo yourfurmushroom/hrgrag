@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="850" viewBox="0 0 1500 850">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#5f6b73"/>
+</marker>
+<filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+<feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#0f172a" flood-opacity="0.12"/>
+</filter>
+</defs>
+<rect x="0" y="0" width="1500" height="850" fill="white"/>
+<text x="40.0" y="42.0" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#172026" text-anchor="start">Failure analysis: where HRG-Proposed still breaks</text>
+<rect x="95.0" y="125.0" width="1280.0" height="590.0" rx="8.0" fill="white" stroke="#c8d1d8" stroke-width="1"/>
+<text x="130.0" y="180.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">Dataset</text>
+<text x="310.0" y="180.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">ok</text>
+<text x="460.0" y="180.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">no_candidates</text>
+<text x="670.0" y="180.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">no_valid_chain</text>
+<text x="880.0" y="180.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">Interpretation</text>
+<line x1="120.0" y1="201.0" x2="1330.0" y2="201.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+<text x="130.0" y="235.0" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#172026" text-anchor="start">MetaQA</text>
+<text x="310.0" y="235.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#15803d" text-anchor="start">397</text>
+<text x="460.0" y="235.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#c2410c" text-anchor="start">203</text>
+<text x="670.0" y="235.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#dc2626" text-anchor="start">0</text>
+<text x="880.0" y="217.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#172026" text-anchor="start">High grammar-hit setting; compact evidence is</text>
+<text x="880.0" y="238.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#172026" text-anchor="start">usually available.</text>
+<rect x="135.0" y="263.0" width="595.5" height="22.0" rx="2.0" fill="#15803d" stroke="none" stroke-width="1"/>
+<rect x="730.5" y="263.0" width="304.5" height="22.0" rx="2.0" fill="#c2410c" stroke="none" stroke-width="1"/>
+<rect x="1035.0" y="263.0" width="0.0" height="22.0" rx="2.0" fill="#dc2626" stroke="none" stroke-width="1"/>
+<text x="1055.0" y="280.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#5f6b73" text-anchor="start">n=600</text>
+<line x1="120.0" y1="316.0" x2="1330.0" y2="316.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+<text x="130.0" y="350.0" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#172026" text-anchor="start">WikiMovies</text>
+<text x="310.0" y="350.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#15803d" text-anchor="start">196</text>
+<text x="460.0" y="350.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#c2410c" text-anchor="start">4</text>
+<text x="670.0" y="350.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#dc2626" text-anchor="start">0</text>
+<text x="880.0" y="332.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#172026" text-anchor="start">Mostly stable because questions are simple</text>
+<text x="880.0" y="353.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#172026" text-anchor="start">1-hop.</text>
+<rect x="135.0" y="378.0" width="882.0" height="22.0" rx="2.0" fill="#15803d" stroke="none" stroke-width="1"/>
+<rect x="1017.0" y="378.0" width="18.0" height="22.0" rx="2.0" fill="#c2410c" stroke="none" stroke-width="1"/>
+<rect x="1035.0" y="378.0" width="0.0" height="22.0" rx="2.0" fill="#dc2626" stroke="none" stroke-width="1"/>
+<text x="1055.0" y="395.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#5f6b73" text-anchor="start">n=200</text>
+<line x1="120.0" y1="431.0" x2="1330.0" y2="431.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+<text x="130.0" y="465.0" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#172026" text-anchor="start">MLPQ</text>
+<text x="310.0" y="465.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#15803d" text-anchor="start">389</text>
+<text x="460.0" y="465.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#c2410c" text-anchor="start">0</text>
+<text x="670.0" y="465.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#dc2626" text-anchor="start">0</text>
+<text x="880.0" y="447.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#172026" text-anchor="start">Cross-lingual grounding and relation</text>
+<text x="880.0" y="468.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#172026" text-anchor="start">alignment remain difficult.</text>
+<rect x="135.0" y="493.0" width="900.0" height="22.0" rx="2.0" fill="#15803d" stroke="none" stroke-width="1"/>
+<rect x="1035.0" y="493.0" width="0.0" height="22.0" rx="2.0" fill="#c2410c" stroke="none" stroke-width="1"/>
+<rect x="1035.0" y="493.0" width="0.0" height="22.0" rx="2.0" fill="#dc2626" stroke="none" stroke-width="1"/>
+<text x="1055.0" y="510.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#5f6b73" text-anchor="start">n=389</text>
+<line x1="120.0" y1="546.0" x2="1330.0" y2="546.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+<text x="130.0" y="580.0" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#172026" text-anchor="start">KQAPro</text>
+<text x="310.0" y="580.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#15803d" text-anchor="start">272</text>
+<text x="460.0" y="580.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#c2410c" text-anchor="start">317</text>
+<text x="670.0" y="580.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#dc2626" text-anchor="start">9</text>
+<text x="880.0" y="562.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#172026" text-anchor="start">Operators and qualifiers exceed simple</text>
+<text x="880.0" y="583.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#172026" text-anchor="start">relation-chain evidence.</text>
+<rect x="135.0" y="608.0" width="409.4" height="22.0" rx="2.0" fill="#15803d" stroke="none" stroke-width="1"/>
+<rect x="544.4" y="608.0" width="477.1" height="22.0" rx="2.0" fill="#c2410c" stroke="none" stroke-width="1"/>
+<rect x="1021.5" y="608.0" width="13.5" height="22.0" rx="2.0" fill="#dc2626" stroke="none" stroke-width="1"/>
+<text x="1055.0" y="625.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#5f6b73" text-anchor="start">n=598</text>
+<rect x="190.0" y="755.0" width="1120.0" height="58.0" rx="8.0" fill="#fff7ed" stroke="#fed7aa" stroke-width="1"/>
+<text x="750.0" y="792.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#c2410c" text-anchor="middle">Use this figure to explain limits; HRG helps retrieval evidence but does not solve every semantic operator.</text>
+</svg>

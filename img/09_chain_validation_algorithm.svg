@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="850" viewBox="0 0 1500 850">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#5f6b73"/>
+</marker>
+<filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+<feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#0f172a" flood-opacity="0.12"/>
+</filter>
+</defs>
+<rect x="0" y="0" width="1500" height="850" fill="white"/>
+<text x="40.0" y="42.0" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#172026" text-anchor="start">KB relation-label validation with actual triples</text>
+<rect x="70.0" y="90.0" width="1360.0" height="72.0" rx="8.0" fill="#f7f9fb" stroke="#c8d1d8" stroke-width="1"/>
+<text x="100.0" y="132.0" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#172026" text-anchor="start">Question: which person directed the movies starred by [John Krasinski]?</text>
+<text x="110.0" y="225.0" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#172026" text-anchor="start">LLM candidate</text>
+<rect x="110.0" y="255.0" width="380.0" height="150.0" rx="8.0" fill="white" stroke="#c8d1d8" stroke-width="1" filter="url(#shadow)"/>
+<text x="135.0" y="295.0" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" fill="#0f766e" text-anchor="start">entity = John Krasinski</text>
+<text x="135.0" y="330.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#5f6b73" text-anchor="start">relation labels =</text>
+<text x="135.0" y="364.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" fill="#172026" text-anchor="start">starred_actors, directed_by</text>
+<line x1="510.0" y1="330.0" x2="610.0" y2="330.0" stroke="#5f6b73" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+<text x="560.0" y="305.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#5f6b73" text-anchor="middle">validate</text>
+<rect x="640.0" y="225.0" width="760.0" height="245.0" rx="8.0" fill="#f0fdfa" stroke="#99f6e4" stroke-width="1" filter="url(#shadow)"/>
+<text x="675.0" y="265.0" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#0f766e" text-anchor="start">Validated KB evidence triples</text>
+<line x1="1038.0" y1="330.0" x2="868.0" y2="330.0" stroke="#7c3aed" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="899.8" y="305.0" width="106.4" height="24.0" rx="4.0" fill="white" stroke="#7c3aed" stroke-width="1"/>
+<text x="953.0" y="322.0" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" fill="#7c3aed" text-anchor="middle">starred_actors</text>
+<line x1="983.0" y1="405.0" x2="1148.0" y2="405.0" stroke="#7c3aed" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="1017.5" y="380.0" width="96.0" height="24.0" rx="4.0" fill="white" stroke="#7c3aed" stroke-width="1"/>
+<text x="1065.5" y="397.0" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" fill="#7c3aed" text-anchor="middle">directed_by</text>
+<rect x="1037.5" y="309.0" width="165.0" height="42.0" rx="8.0" fill="#14b8a6" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1120.0" y="335.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">Something Borrowed</text>
+<rect x="712.5" y="309.0" width="155.0" height="42.0" rx="8.0" fill="#0f766e" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="790.0" y="335.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">John Krasinski</text>
+<rect x="817.5" y="384.0" width="165.0" height="42.0" rx="8.0" fill="#14b8a6" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="900.0" y="410.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">Something Borrowed</text>
+<rect x="1147.5" y="384.0" width="155.0" height="42.0" rx="8.0" fill="#0f766e" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1225.0" y="410.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">Luke Greenfield</text>
+<rect x="170.0" y="500.0" width="1160.0" height="170.0" rx="8.0" fill="#ecfdf5" stroke="#86efac" stroke-width="1"/>
+<text x="210.0" y="540.0" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#15803d" text-anchor="start">Validation rule</text>
+<text x="210.0" y="580.0" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="400" fill="#172026" text-anchor="start">The relation label must appear in actual KB triples.</text>
+<text x="210.0" y="609.0" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="400" fill="#172026" text-anchor="start">The topic entity and answer must be supported by retrieved evidence triples.</text>
+<text x="210.0" y="638.0" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="400" fill="#172026" text-anchor="start">HRG contributes grammar-hit and ranking signals; it does not create new relation names.</text>
+<rect x="470.0" y="720.0" width="560.0" height="54.0" rx="8.0" fill="#0f766e" stroke="none" stroke-width="1"/>
+<text x="750.0" y="755.0" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="white" text-anchor="middle">valid evidence builds compact context</text>
+</svg>

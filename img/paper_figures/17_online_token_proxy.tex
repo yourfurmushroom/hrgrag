@@ -1,0 +1,55 @@
+
+\documentclass[tikz,border=12pt]{standalone}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\definecolor{ink}{HTML}{172026}
+\definecolor{muted}{HTML}{5F6B73}
+\definecolor{line}{HTML}{CBD5E1}
+\definecolor{panel}{HTML}{F8FAFC}
+\definecolor{bfs}{HTML}{64748B}
+\definecolor{spine}{HTML}{0F766E}
+\definecolor{hrg}{HTML}{7C3AED}
+\definecolor{warn}{HTML}{C2410C}
+\definecolor{ok}{HTML}{15803D}
+\definecolor{blue}{HTML}{2563EB}
+\pgfplotsset{
+  every axis/.append style={
+    tick label style={font=\small, color=ink},
+    label style={font=\small, color=ink},
+    title style={font=\bfseries\small, color=ink},
+    legend style={font=\footnotesize, draw=none, fill=none},
+    grid=major,
+    grid style={line!55},
+    axis line style={line},
+  }
+}
+\begin{document}
+
+\begin{tikzpicture}
+\begin{axis}[
+  ybar,
+  bar width=10pt,
+  width=15.8cm,
+  height=8.0cm,
+  ymin=0,
+  ymax=280,
+  ytick={0,50,100,150,200,250},
+  scaled y ticks=false,
+  enlarge x limits=0.15,
+  ylabel={Total online token proxy vs BFS (\%)},
+  symbolic x coords={MetaQA,WikiMovies,MLPQ,KQAPro},
+  xtick=data,
+  ymajorgrids=true,
+  legend columns=2,
+  legend style={at={(0.5,-0.14)}, anchor=north, font=\footnotesize},
+  title={End-to-end online token proxy ratio, not only final context},
+]
+\addplot+[fill=bfs!65, draw=bfs] coordinates {(MetaQA,100.0) (WikiMovies,100.0) (MLPQ,100.0) (KQAPro,100.0)};
+\addplot+[fill=spine!65, draw=spine] coordinates {(MetaQA,15.7) (WikiMovies,196.3) (MLPQ,15.4) (KQAPro,29.5)};
+\addplot+[fill=hrg!70, draw=hrg] coordinates {(MetaQA,17.0) (WikiMovies,252.1) (MLPQ,23.4) (KQAPro,65.5)};
+\legend{Baseline-BFS, Spine-Correction-triple, HRG-Proposed-triple}
+\end{axis}
+\end{tikzpicture}
+
+\end{document}

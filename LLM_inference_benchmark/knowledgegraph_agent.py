@@ -39,6 +39,7 @@ class HRGMatcher:
         print(f"[HRGMatcher] Loaded {len(self.grammar)} rules.")
 
         self._sorted_rules: List[Dict[str, Any]] = []
+        self._relation_path_prior_cache: Dict[int, Counter[Tuple[str, ...]]] = {}
         for rule in self.grammar:
             terminal_edges = self._extract_terminal_edges(rule)
             labels = [rel for _, rel, _ in terminal_edges if rel]
@@ -187,6 +188,93 @@ class HRGMatcher:
             self.get_all_hints()
         return self._sorted_rules[:k]
 
+    def relation_path_prior(self, max_depth: int) -> Counter[Tuple[str, ...]]:
+        """
+        Build a grammar-derived path bank.
+
+        The extracted HRG rules are local graph fragments, not gold QA paths. We
+        therefore harvest relation sequences from both the terminal edge order
+        and data-adaptively selected terminal-edge adjacency walks. This turns HRG into a
+        candidate-space prior for grammar-first retrieval.
+        """
+        max_depth = max(1, int(max_depth or 1))
+        if max_depth in self._relation_path_prior_cache:
+            return self._relation_path_prior_cache[max_depth]
+
+        prior: Counter[Tuple[str, ...]] = Counter()
+        terminal_counts = [
+            int(rule.get("_cached_terminal_count", 0) or 0)
+            for rule in self.grammar
+            if int(rule.get("_cached_terminal_count", 0) or 0) > 0
+        ]
+        structural_edge_limit = 0
+        if terminal_counts:
+            ordered_counts = sorted(terminal_counts)
+            structural_edge_limit = ordered_counts[len(ordered_counts) // 2]
+
+        for rule in self.grammar:
+            terminal_edges = rule.get("_cached_terminal_edges")
+            if terminal_edges is None:
+                terminal_edges = self._extract_terminal_edges(rule)
+                rule["_cached_terminal_edges"] = terminal_edges
+
+            weight = rule.get("probability", rule.get("count", len(terminal_edges) or 1.0))
+            try:
+                weight = float(weight)
+            except Exception:
+                weight = float(len(terminal_edges) or 1.0)
+            if weight <= 0:
+                weight = float(len(terminal_edges) or 1.0)
+
+            labels = [rel for _, rel, _ in terminal_edges if rel]
+            for length in range(1, max_depth + 1):
+                if len(labels) < length:
+                    continue
+                for start in range(0, len(labels) - length + 1):
+                    seq = tuple(labels[start:start + length])
+                    if all(seq):
+                        prior[seq] += weight
+
+            if not structural_edge_limit or len(terminal_edges) > structural_edge_limit:
+                continue
+
+            adjacency: DefaultDict[Any, List[Tuple[str, Any]]] = defaultdict(list)
+            for src, rel, dst in terminal_edges:
+                if src is None or dst is None or not rel:
+                    continue
+                adjacency[src].append((rel, dst))
+                adjacency[dst].append((rel, src))
+            if not adjacency:
+                continue
+
+            for node in adjacency:
+                adjacency[node].sort(key=lambda x: (x[0], str(x[1])))
+
+            structural_paths: Set[Tuple[str, ...]] = set()
+
+            def dfs(node: Any, path: Tuple[str, ...], seen_nodes: Set[Any]) -> None:
+                if path:
+                    structural_paths.add(path)
+                if len(path) >= max_depth:
+                    return
+                for rel, nxt in adjacency.get(node, []):
+                    if nxt in seen_nodes:
+                        continue
+                    dfs(nxt, path + (rel,), seen_nodes | {nxt})
+
+            for node in sorted(adjacency, key=str):
+                dfs(node, tuple(), {node})
+
+            for path in structural_paths:
+                prior[path] += weight
+
+        self._relation_path_prior_cache[max_depth] = prior
+        print(
+            f"[HRGMatcher] relation_path_prior depth<={max_depth} "
+            f"contains {len(prior)} signatures."
+        )
+        return prior
+
 
 # ============================================================
 # KnowledgeGraphAgent
@@ -202,7 +290,7 @@ class KnowledgeGraphAgent:
         "fact_t",
     }
     QUESTION_ENTITY_STOPWORDS = {
-        "a", "an", "and", "are", "as", "at", "by", "for", "from", "got",
+        "a", "an", "and", "are", "as", "at", "by", "co", "for", "from", "got",
         "have", "has", "how", "in", "is", "it", "many", "of", "on", "or",
         "the", "to", "was", "were", "what", "when", "where", "which", "who",
         "whose", "with",
@@ -1844,6 +1932,117 @@ class KnowledgeGraphAgent:
 
         return out
 
+    def _preferred_relations_for_question(
+        self,
+        user_prompt: str,
+    ) -> Set[str]:
+        question_terms = {
+            term
+            for term in self._normalize_match_text(user_prompt).split()
+            if term not in self.QUESTION_ENTITY_STOPWORDS
+        }
+        preferred_rels = set()
+        for rel in self.allowed_rel_tokens:
+            rel_text = self._normalize_match_text(self._relation_match_text(rel))
+            rel_terms = {
+                term
+                for term in rel_text.split()
+                if term not in self.QUESTION_ENTITY_STOPWORDS
+            }
+            if question_terms & rel_terms:
+                preferred_rels.add(rel)
+        return preferred_rels
+
+    def _score_relation_path_for_question(
+        self,
+        path: Tuple[str, ...],
+        user_prompt: str,
+        preferred_rels: Optional[Set[str]] = None,
+    ) -> float:
+        question_terms = {
+            term
+            for term in self._normalize_match_text(user_prompt).split()
+            if term not in self.QUESTION_ENTITY_STOPWORDS
+        }
+        preferred_rels = preferred_rels if preferred_rels is not None else self._preferred_relations_for_question(user_prompt)
+
+        if not path:
+            return 0.0
+
+        scores = [
+            self._score_relation_for_question(
+                rel,
+                question_terms,
+                preferred_rels,
+                edge_count=0,
+            )
+            for rel in path
+        ]
+        return sum(scores) / len(scores)
+
+    def _make_grammar_path_bank_candidates(
+        self,
+        user_prompt: str,
+        entity: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Generate KG-valid candidates from HRG relation-path signatures.
+
+        Unlike the deterministic fallback, this does not discover chains by
+        frontier branching first. HRG provides the relation-path bank, and the
+        KG only validates whether each path can execute from the topic entity.
+        """
+        if not self.hrg:
+            return []
+
+        resolved_entity = self._resolve_entity_to_kb(entity)
+        if not resolved_entity:
+            return []
+
+        path_prior = self.hrg.relation_path_prior(self.valid_chain_fallback_max_depth)
+        scored: List[Tuple[Tuple[Any, ...], Dict[str, Any]]] = []
+        preferred_rels = self._preferred_relations_for_question(user_prompt)
+
+        for path, prior_weight in path_prior.items():
+            chain = list(path)
+            kb_result = self._check_chain_validity(entity, chain)
+            if not kb_result.get("valid"):
+                continue
+
+            grammar_features = (
+                self._get_grammar_match_features(chain)
+                if self.use_grammar_rerank
+                else self._empty_grammar_features()
+            )
+            grammar_features = self._add_relation_ngram_feature(grammar_features, chain)
+            preferred_coverage = len(set(path) & preferred_rels)
+            question_score = self._score_relation_path_for_question(path, user_prompt, preferred_rels)
+            final_size = self._safe_int(kb_result.get("final_size", 0), 0)
+            ranking_key = (
+                preferred_coverage,
+                question_score,
+                self._safe_int(grammar_features.get("same_arity_hit", 0), 0),
+                self._safe_int(grammar_features.get("ordered_path_hit", 0), 0),
+                self._safe_int(grammar_features.get("hit", 0), 0),
+                self._safe_float(grammar_features.get("score", 0.0), 0.0),
+                self._safe_float(prior_weight, 0.0),
+                -final_size,
+                tuple(chain),
+            )
+            scored.append((
+                ranking_key,
+                {
+                    "entity": entity,
+                    "chain": chain,
+                    "source": "grammar_first",
+                    "confidence": 0.0,
+                    "kb_result": kb_result,
+                },
+            ))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [cand for _, cand in scored]
+
     def _make_grammar_first_candidates(
         self,
         user_prompt: str,
@@ -1865,7 +2064,7 @@ class KnowledgeGraphAgent:
             entity_seeds.append(bracket_entity)
             seen_entities.add(self._resolve_entity_to_kb(bracket_entity) or bracket_entity)
 
-        for entity in self._extract_entity_candidates_from_question(user_prompt, limit=max(1, min(8, top_k))):
+        for entity in self._extract_entity_candidates_from_question(user_prompt, limit=max(1, top_k)):
             resolved = self._resolve_entity_to_kb(entity)
             if not resolved or resolved in seen_entities:
                 continue
@@ -1877,24 +2076,25 @@ class KnowledgeGraphAgent:
         if not entity_seeds:
             return [], 0
 
-        per_seed_top_k = max(1, math.ceil(top_k / max(1, len(entity_seeds))))
         pool: List[Dict[str, Any]] = []
         for entity in entity_seeds:
-            generated = self._make_deterministic_valid_chain_candidates(
-                user_prompt,
-                [{
-                    "entity": entity,
-                    "chain": [],
-                    "source": "grammar_first_seed",
-                    "confidence": 0.0,
-                }],
-                top_k=per_seed_top_k,
-            )
+            generated = self._make_grammar_path_bank_candidates(user_prompt, entity)
+            if not generated:
+                generated = self._make_deterministic_valid_chain_candidates(
+                    user_prompt,
+                    [{
+                        "entity": entity,
+                        "chain": [],
+                        "source": "grammar_first_seed",
+                        "confidence": 0.0,
+                    }],
+                    top_k=top_k,
+                )
             for cand in generated:
                 cand["source"] = "grammar_first"
                 pool.append(cand)
 
-        return self._dedup_candidates(pool)[:top_k], len(entity_seeds)
+        return self._dedup_candidates(pool), len(entity_seeds)
 
     # ============================================================
     # Serialization / Answer Generation
@@ -2444,7 +2644,10 @@ class KnowledgeGraphAgent:
                         cand.get("_grammar_first_idx", 0),
                     )
                 )
+                candidates = candidates[: self.valid_chain_fallback_topk]
                 print(f"[GrammarFirst] LLM reranked KG-valid candidates | tokens~{rerank_tokens}", flush=True)
+            else:
+                candidates = candidates[: self.valid_chain_fallback_topk]
         else:
             parse_t0 = time.perf_counter()
             candidates, p1_tokens = await self._parse_intent_candidates(user_prompt, self.num_candidates)

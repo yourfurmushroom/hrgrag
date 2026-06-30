@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="850" viewBox="0 0 1500 850">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#5f6b73"/>
+</marker>
+<filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+<feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#0f172a" flood-opacity="0.12"/>
+</filter>
+</defs>
+<rect x="0" y="0" width="1500" height="850" fill="white"/>
+<text x="40.0" y="42.0" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#172026" text-anchor="start">MetaQA compression: HRG-Proposed context and subgraph size vs BFS</text>
+<rect x="70.0" y="140.0" width="620.0" height="565.0" rx="8.0" fill="#f7f9fb" stroke="#c8d1d8" stroke-width="1"/>
+<text x="100.0" y="180.0" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#172026" text-anchor="start">Average context tokens</text>
+<rect x="150.0" y="270.0" width="95.0" height="350.0" rx="4.0" fill="#8b98a5" stroke="none" stroke-width="1"/>
+<text x="197.0" y="650.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#172026" text-anchor="middle">BFS</text>
+<text x="197.0" y="258.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#8b98a5" text-anchor="middle">4415.83</text>
+<rect x="320.0" y="612.3" width="95.0" height="7.7" rx="4.0" fill="#0f766e" stroke="none" stroke-width="1"/>
+<text x="367.0" y="650.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#172026" text-anchor="middle">Spine Triple</text>
+<text x="367.0" y="600.3" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#0f766e" text-anchor="middle">96.86</text>
+<rect x="490.0" y="613.9" width="95.0" height="6.1" rx="4.0" fill="#2563eb" stroke="none" stroke-width="1"/>
+<text x="537.0" y="650.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#172026" text-anchor="middle">HRG Triple</text>
+<text x="537.0" y="601.9" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#2563eb" text-anchor="middle">77.26</text>
+<line x1="125.0" y1="620.0" x2="630.0" y2="620.0" stroke="#c8d1d8" stroke-width="2" stroke-linecap="round"/>
+<rect x="810.0" y="140.0" width="620.0" height="565.0" rx="8.0" fill="#f7f9fb" stroke="#c8d1d8" stroke-width="1"/>
+<text x="840.0" y="180.0" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#172026" text-anchor="start">Average retrieved edges</text>
+<rect x="890.0" y="270.0" width="95.0" height="350.0" rx="4.0" fill="#8b98a5" stroke="none" stroke-width="1"/>
+<text x="937.0" y="650.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#172026" text-anchor="middle">BFS</text>
+<text x="937.0" y="258.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#8b98a5" text-anchor="middle">369.08</text>
+<rect x="1060.0" y="611.3" width="95.0" height="8.7" rx="4.0" fill="#0f766e" stroke="none" stroke-width="1"/>
+<text x="1107.0" y="650.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#172026" text-anchor="middle">Spine Triple</text>
+<text x="1107.0" y="599.3" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#0f766e" text-anchor="middle">9.20</text>
+<rect x="1230.0" y="613.0" width="95.0" height="7.0" rx="4.0" fill="#2563eb" stroke="none" stroke-width="1"/>
+<text x="1277.0" y="650.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#172026" text-anchor="middle">HRG Triple</text>
+<text x="1277.0" y="601.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#2563eb" text-anchor="middle">7.37</text>
+<line x1="865.0" y1="620.0" x2="1370.0" y2="620.0" stroke="#c8d1d8" stroke-width="2" stroke-linecap="round"/>
+<rect x="170.0" y="730.0" width="1160.0" height="70.0" rx="8.0" fill="#ecfdf5" stroke="#86efac" stroke-width="1"/>
+<text x="750.0" y="773.0" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#15803d" text-anchor="middle">HRG-Proposed-triple uses 1.75% of BFS context in this MetaQA setting.</text>
+</svg>
