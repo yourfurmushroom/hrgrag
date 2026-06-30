@@ -221,7 +221,7 @@ def build_config_text(job: Dict[str, str]) -> str:
         [
             "GRAMMAR_PATH=",
             "RUN_GRAMMAR=1",
-            "SAMPLE_LIMIT=200",
+            "SAMPLE_LIMIT=50",
             "MODEL_FILTER=",
             "KB_ABLATION_MODE=none",
             "KB_ABLATION_RATIO=0",

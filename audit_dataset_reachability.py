@@ -38,7 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-root", default=None)
     parser.add_argument("--kb-path", default=None)
     parser.add_argument("--split", default=None)
-    parser.add_argument("--sample-limit", type=int, default=200)
+    parser.add_argument("--sample-limit", type=int, default=50)
     parser.add_argument("--max-depth", type=int, default=4)
     parser.add_argument("--max-frontier", type=int, default=30000)
     parser.add_argument("--metaqa-variant", default="vanilla")

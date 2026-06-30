@@ -224,13 +224,13 @@ Fast post-hoc diagnostics can be run on saved dumps without loading a model:
 Perturbation reachability audits rebuild ablated KBs and check whether topic entities / answers remain reachable:
 
 ```bash
-SAMPLE_LIMIT=200 KB_ABLATION_SEEDS="0 1 2 3 4" ./run_perturbation_reachability_audits.sh
+SAMPLE_LIMIT=50 KB_ABLATION_SEEDS="0 1 2 3 4" ./run_perturbation_reachability_audits.sh
 ```
 
 For a single-dataset audit:
 
 ```bash
-CONFIG_FILES=configs/config.metaqa.env SAMPLE_LIMIT=200 ./run_perturbation_reachability_audits.sh
+CONFIG_FILES=configs/config.metaqa.env SAMPLE_LIMIT=50 ./run_perturbation_reachability_audits.sh
 ```
 
 Hyperparameter sensitivity runs are intentionally small by default:

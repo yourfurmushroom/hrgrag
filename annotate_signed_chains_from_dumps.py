@@ -128,7 +128,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Infer signed r+/r- traversal chains from saved dumps.")
     parser.add_argument("--artifacts-root", default="artifacts_full")
     parser.add_argument("--model-filter", default="HRG-Proposed")
-    parser.add_argument("--limit", type=int, default=200)
+    parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--out-dir", default=None)
     args = parser.parse_args()
 

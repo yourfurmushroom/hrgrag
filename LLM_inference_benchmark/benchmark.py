@@ -122,13 +122,13 @@ def sharded_backbone_bool(tag: str, name: str, default: bool) -> bool:
 
 
 MODEL_BACKBONES = [
-    {
-        "tag": "gpt-oss",
-        "model_id": "openai/gpt-oss-20b",
-        "use_model_sharding": True,
-        "strict_gpu_sharding": sharded_backbone_bool("gpt-oss", "STRICT_GPU_SHARDING", True),
-        "target_device": sharded_backbone_target_device("gpt-oss", "cuda:0,cuda:1"),
-    },
+    # {
+    #     "tag": "gpt-oss",
+    #     "model_id": "openai/gpt-oss-20b",
+    #     "use_model_sharding": True,
+    #     "strict_gpu_sharding": sharded_backbone_bool("gpt-oss", "STRICT_GPU_SHARDING", True),
+    #     "target_device": sharded_backbone_target_device("gpt-oss", "cuda:0,cuda:1"),
+    # },
     # {
     #     "tag": "qwen3.5",
     #     "model_id": "Qwen/Qwen3.5-35B-A3B-FP8",
@@ -471,6 +471,27 @@ def build_model_specs():
                 )
             )
 
+            specs.extend(
+                paired_serialization_specs(
+                    base_name=f"HRG-GrammarCompiled-{tag}",
+                    model_id=model_id,
+                    shared_group=f"HRG-GrammarCompiled-{tag}",
+                    base_kwargs={
+                        **llm_device_kwargs,
+                        **controlled_budget,
+                        "use_grammar_compiled_retrieval": True,
+                        "use_grammar_first_retrieval": False,
+                        "use_grammar_rerank": True,
+                        "use_grammar_expansion": False,
+                        "use_fallback_correction": False,
+                        "use_deterministic_valid_chain_fallback": False,
+                        "use_valid_chain_llm_rerank": bool_env("HRG_GRAMMAR_COMPILED_LLM_RERANK", False),
+                        "use_grammar_hint": False,
+                        "require_ordered_grammar_match": bool_env("HRG_REQUIRE_ORDERED_GRAMMAR_MATCH", False),
+                    },
+                )
+            )
+
         specs.extend(
             paired_serialization_specs(
                 base_name=f"HRG-Proposed-{tag}",
@@ -548,7 +569,7 @@ MODEL_SPECS = build_model_specs()
 
 
 
-TEST_SAMPLE_LIMIT = 200
+TEST_SAMPLE_LIMIT = 50
 OUTPUT_FILE = os.path.join(ARTIFACTS_ROOT, "shared", "benchmark_results.json")
 
 DETAIL_DIR = os.path.join(ARTIFACTS_ROOT, "shared", "benchmark_details_csv")

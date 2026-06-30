@@ -334,6 +334,8 @@ class KnowledgeGraphAgent:
         use_grammar_guided_retrieval: bool = False,
         # ---- Grammar-first retrieval: enumerate KG-valid chains before LLM chain parsing ----
         use_grammar_first_retrieval: bool = False,
+        # ---- Grammar-compiled retrieval: bind entity, activate local HRG rules, compile chains ----
+        use_grammar_compiled_retrieval: bool = False,
         # ---- Deterministic fallback: enumerate KG-valid chains before giving up ----
         use_deterministic_valid_chain_fallback: bool = False,
         valid_chain_fallback_topk: int = 8,
@@ -388,6 +390,7 @@ class KnowledgeGraphAgent:
         self.top_k_edges = top_k_edges
         self.use_grammar_guided_retrieval = use_grammar_guided_retrieval
         self.use_grammar_first_retrieval = use_grammar_first_retrieval
+        self.use_grammar_compiled_retrieval = use_grammar_compiled_retrieval
         self.use_deterministic_valid_chain_fallback = use_deterministic_valid_chain_fallback
         self.valid_chain_fallback_topk = valid_chain_fallback_topk
         self.valid_chain_fallback_beam_width = valid_chain_fallback_beam_width
@@ -871,12 +874,12 @@ class KnowledgeGraphAgent:
             key = (entity, tuple(chain))
             if key not in seen and entity and chain:
                 seen.add(key)
-                deduped.append({
-                    "entity": entity,
-                    "chain": chain,
-                    "source": c.get("source", "llm"),
-                    "confidence": float(c.get("confidence", 0.0) or 0.0),
-                })
+                row = dict(c)
+                row["entity"] = entity
+                row["chain"] = chain
+                row["source"] = c.get("source", "llm")
+                row["confidence"] = float(c.get("confidence", 0.0) or 0.0)
+                deduped.append(row)
         return deduped
 
     def _normalize_match_text(self, text: str) -> str:
@@ -2096,6 +2099,340 @@ class KnowledgeGraphAgent:
 
         return self._dedup_candidates(pool), len(entity_seeds)
 
+    def _relation_mention_positions(self, user_prompt: str) -> Dict[str, int]:
+        normalized = self._normalize_match_text(user_prompt)
+        tokens = normalized.split()
+        positions: Dict[str, int] = {}
+        if not tokens:
+            return positions
+
+        for rel in sorted(self.allowed_rel_tokens):
+            variants = {rel, rel.replace("_", " ")}
+            variants.update(self.relation_aliases.get(rel, set()))
+            best_pos: Optional[int] = None
+            for variant in variants:
+                variant_tokens = self._normalize_match_text(variant).split()
+                if not variant_tokens:
+                    continue
+                width = len(variant_tokens)
+                for idx in range(0, len(tokens) - width + 1):
+                    if tokens[idx:idx + width] == variant_tokens:
+                        if best_pos is None or idx < best_pos:
+                            best_pos = idx
+                        break
+            if best_pos is not None:
+                positions[rel] = best_pos
+        return positions
+
+    def _target_relations_for_question(
+        self,
+        user_prompt: str,
+        preferred_rels: Optional[Set[str]] = None,
+    ) -> Set[str]:
+        preferred_rels = preferred_rels if preferred_rels is not None else self._preferred_relations_for_question(user_prompt)
+        mention_positions = self._relation_mention_positions(user_prompt)
+        mentioned = {
+            rel: pos
+            for rel, pos in mention_positions.items()
+            if rel in preferred_rels
+        }
+        if not mentioned:
+            return set(preferred_rels)
+        first_pos = min(mentioned.values())
+        return {rel for rel, pos in mentioned.items() if pos == first_pos}
+
+    def _local_relation_counts_from_entity(
+        self,
+        start_entity: str,
+        max_depth: int,
+    ) -> Counter[str]:
+        relation_counts: Counter[str] = Counter()
+        if not start_entity:
+            return relation_counts
+
+        frontier: Set[str] = {start_entity}
+        visited_nodes: Set[str] = {start_entity}
+        for _ in range(max(1, int(max_depth or 1))):
+            next_frontier: Set[str] = set()
+            for ent in sorted(frontier, key=str)[: self.max_frontier]:
+                rels = set(self.kb_out.get(ent, {})) | set(self.kb_in.get(ent, {}))
+                for rel in sorted(rels):
+                    if rel not in self.allowed_rel_tokens:
+                        continue
+                    edges = self._neighbors_for_token(ent, rel)
+                    if not edges:
+                        continue
+                    relation_counts[rel] += len(edges)
+                    for h, _, t in edges:
+                        nxt = self._other_endpoint(ent, h, t)
+                        if nxt not in visited_nodes:
+                            next_frontier.add(nxt)
+            if not next_frontier:
+                break
+            visited_nodes.update(next_frontier)
+            frontier = set(list(next_frontier)[: self.max_frontier])
+        return relation_counts
+
+    def _activate_grammar_rules_for_entity(
+        self,
+        start_entity: str,
+        preferred_rels: Set[str],
+    ) -> Tuple[List[Dict[str, Any]], Set[str], Counter[str]]:
+        local_relation_counts = self._local_relation_counts_from_entity(
+            start_entity,
+            self.valid_chain_fallback_max_depth,
+        )
+        if not self.hrg:
+            return [], set(local_relation_counts), local_relation_counts
+
+        scored_rules: List[Tuple[Tuple[Any, ...], Dict[str, Any]]] = []
+        for rule in self.hrg.grammar:
+            labels = set(rule.get("_cached_labels", set()))
+            if not labels:
+                continue
+            local_overlap = labels & set(local_relation_counts)
+            if not local_overlap:
+                continue
+            preferred_overlap = labels & preferred_rels
+            if preferred_rels and not preferred_overlap:
+                continue
+            rule_weight = self._safe_float(rule.get("probability", rule.get("count", 0)), 0.0)
+            scored_rules.append((
+                (
+                    len(preferred_overlap),
+                    len(local_overlap),
+                    rule_weight,
+                    -self._rule_terminal_count(rule),
+                    tuple(sorted(labels)),
+                ),
+                rule,
+            ))
+
+        if not scored_rules and local_relation_counts:
+            for rule in self.hrg.grammar:
+                labels = set(rule.get("_cached_labels", set()))
+                local_overlap = labels & set(local_relation_counts)
+                if not local_overlap:
+                    continue
+                rule_weight = self._safe_float(rule.get("probability", rule.get("count", 0)), 0.0)
+                scored_rules.append((
+                    (
+                        0,
+                        len(local_overlap),
+                        rule_weight,
+                        -self._rule_terminal_count(rule),
+                        tuple(sorted(labels)),
+                    ),
+                    rule,
+                ))
+
+        scored_rules.sort(key=lambda x: x[0], reverse=True)
+        activated_rules = [rule for _, rule in scored_rules]
+        activated_rels: Set[str] = set()
+        for rule in activated_rules:
+            activated_rels.update(rule.get("_cached_labels", set()))
+        activated_rels &= set(local_relation_counts)
+        if not activated_rels:
+            activated_rels = set(local_relation_counts)
+        return activated_rules, activated_rels, local_relation_counts
+
+    def _compiled_relation_options_from_frontier(
+        self,
+        frontier: Set[str],
+        allowed_rels: Set[str],
+        question_terms: Set[str],
+        preferred_rels: Set[str],
+    ) -> List[Tuple[float, str, Set[str]]]:
+        relation_next: Dict[str, Set[str]] = defaultdict(set)
+        relation_edge_counts: Dict[str, int] = defaultdict(int)
+
+        for ent in sorted(frontier, key=str)[: self.max_frontier]:
+            rels = set(self.kb_out.get(ent, {})) | set(self.kb_in.get(ent, {}))
+            for rel in sorted(rels):
+                if rel not in allowed_rels or rel not in self.allowed_rel_tokens:
+                    continue
+                for h, _, t in self._neighbors_for_token(ent, rel):
+                    relation_next[rel].add(self._other_endpoint(ent, h, t))
+                    relation_edge_counts[rel] += 1
+
+        options: List[Tuple[float, str, Set[str]]] = []
+        for rel, next_frontier in relation_next.items():
+            if not next_frontier:
+                continue
+            score = self._score_relation_for_question(
+                rel,
+                question_terms,
+                preferred_rels,
+                relation_edge_counts.get(rel, 0),
+            )
+            options.append((score, rel, next_frontier))
+        options.sort(key=lambda x: (-x[0], x[1]))
+        return options[: max(1, self.valid_chain_fallback_branch)]
+
+    def _compiled_rule_support_count(
+        self,
+        chain: List[str],
+        activated_rules: List[Dict[str, Any]],
+    ) -> int:
+        chain_counts = Counter(chain)
+        support = 0
+        for rule in activated_rules:
+            counts = rule.get("_cached_label_counts")
+            if counts is None:
+                counts = Counter(rule.get("_cached_labels", set()))
+            if all(counts.get(rel, 0) >= needed for rel, needed in chain_counts.items()):
+                support += 1
+        return support
+
+    def _make_grammar_compiled_candidates(
+        self,
+        user_prompt: str,
+        top_k: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        top_k = top_k or self.valid_chain_fallback_topk
+        entity_seeds: List[str] = []
+        seen_entities: Set[str] = set()
+
+        bracket_entity = self._normalize_entity_from_question(user_prompt, None)
+        if bracket_entity and self._resolve_entity_to_kb(bracket_entity):
+            entity_seeds.append(bracket_entity)
+            seen_entities.add(self._resolve_entity_to_kb(bracket_entity) or bracket_entity)
+
+        for entity in self._extract_entity_candidates_from_question(user_prompt, limit=max(1, top_k)):
+            resolved = self._resolve_entity_to_kb(entity)
+            if not resolved or resolved in seen_entities:
+                continue
+            entity_seeds.append(entity)
+            seen_entities.add(resolved)
+            if len(entity_seeds) >= max(1, min(8, top_k)):
+                break
+
+        if not entity_seeds:
+            return [], 0
+
+        preferred_rels = self._preferred_relations_for_question(user_prompt)
+        target_rels = self._target_relations_for_question(user_prompt, preferred_rels)
+        question_terms = {
+            term
+            for term in self._normalize_match_text(user_prompt).split()
+            if term not in self.QUESTION_ENTITY_STOPWORDS
+        }
+
+        compiled: List[Tuple[Tuple[Any, ...], Dict[str, Any]]] = []
+        max_depth = max(1, self.valid_chain_fallback_max_depth)
+        beam_width = max(1, self.valid_chain_fallback_beam_width)
+
+        for entity in entity_seeds:
+            start_entity = self._resolve_entity_to_kb(entity)
+            if not start_entity:
+                continue
+            activated_rules, activated_rels, local_relation_counts = self._activate_grammar_rules_for_entity(
+                start_entity,
+                preferred_rels,
+            )
+            if not activated_rels:
+                continue
+
+            beams: List[Tuple[Tuple[Any, ...], List[str], Set[str], float]] = [
+                ((0,), [], {start_entity}, 0.0)
+            ]
+            for depth in range(1, max_depth + 1):
+                next_beams: List[Tuple[Tuple[Any, ...], List[str], Set[str], float]] = []
+                for _, chain, frontier, accumulated_score in beams:
+                    options = self._compiled_relation_options_from_frontier(
+                        frontier,
+                        activated_rels,
+                        question_terms,
+                        preferred_rels,
+                    )
+                    for rel_score, rel, next_frontier in options:
+                        new_chain = chain + [rel]
+                        chain_rel_set = set(new_chain)
+                        grammar_features = (
+                            self._get_grammar_match_features(new_chain)
+                            if self.use_grammar_rerank
+                            else self._empty_grammar_features()
+                        )
+                        grammar_features = self._add_relation_ngram_feature(grammar_features, new_chain)
+                        support_count = self._compiled_rule_support_count(new_chain, activated_rules)
+                        final_size = len(next_frontier)
+                        preferred_coverage = len(chain_rel_set & preferred_rels)
+                        all_preferred_covered = int(not preferred_rels or preferred_rels <= chain_rel_set)
+                        target_last = int(bool(target_rels and new_chain[-1] in target_rels))
+                        target_present = int(bool(target_rels and chain_rel_set & target_rels))
+                        relation_score = accumulated_score + rel_score
+                        support_frontier = min(final_size, max(1, self.subgraph_support_saturation))
+                        ranking_key = (
+                            all_preferred_covered,
+                            target_last,
+                            preferred_coverage,
+                            target_present,
+                            self._safe_int(grammar_features.get("same_arity_hit", 0), 0),
+                            self._safe_int(grammar_features.get("ordered_path_hit", 0), 0),
+                            self._safe_int(grammar_features.get("hit", 0), 0),
+                            support_count,
+                            self._safe_float(grammar_features.get("score", 0.0), 0.0),
+                            relation_score,
+                            support_frontier,
+                            -final_size,
+                            -len(new_chain),
+                            tuple(new_chain),
+                        )
+                        next_beams.append((ranking_key, new_chain, next_frontier, relation_score))
+                        compiled.append((
+                            ranking_key,
+                            {
+                                "entity": entity,
+                                "chain": new_chain,
+                                "source": "grammar_compiled",
+                                "confidence": 0.0,
+                                "compiled_rank_key": ranking_key,
+                                "compiled_preferred_coverage": preferred_coverage,
+                                "compiled_all_preferred_covered": all_preferred_covered,
+                                "compiled_target_last": target_last,
+                                "compiled_target_present": target_present,
+                                "compiled_rule_support": support_count,
+                                "compiled_activated_rule_count": len(activated_rules),
+                                "compiled_activated_relation_count": len(activated_rels),
+                                "compiled_preferred_rels": sorted(preferred_rels),
+                                "compiled_target_rels": sorted(target_rels),
+                                "compiled_local_relation_count": len(local_relation_counts),
+                            },
+                        ))
+
+                next_beams.sort(key=lambda x: x[0], reverse=True)
+                beams = next_beams[:beam_width]
+                if not beams:
+                    break
+
+        compiled.sort(key=lambda x: x[0], reverse=True)
+        out = [cand for _, cand in compiled]
+        out = self._dedup_candidates(out)
+        if not out:
+            fallback_pool: List[Dict[str, Any]] = []
+            for entity in entity_seeds:
+                fallback_pool.extend(
+                    self._make_deterministic_valid_chain_candidates(
+                        user_prompt,
+                        [{
+                            "entity": entity,
+                            "chain": [],
+                            "source": "grammar_compiled_seed",
+                            "confidence": 0.0,
+                        }],
+                        top_k=top_k,
+                    )
+                )
+            for cand in fallback_pool:
+                cand["source"] = "grammar_compiled_fallback"
+            out = self._dedup_candidates(fallback_pool)
+
+        out = out[:top_k]
+        denom = max(len(out) - 1, 1)
+        for idx, cand in enumerate(out):
+            cand["compiled_rank_score"] = 1.0 - (idx / denom)
+        return out, len(entity_seeds)
+
     # ============================================================
     # Serialization / Answer Generation
     # ============================================================
@@ -2266,6 +2603,8 @@ class KnowledgeGraphAgent:
         elif source == "kg_valid_fallback":
             source_priority = 2
         elif source == "grammar_first":
+            source_priority = 2
+        elif source == "grammar_compiled":
             source_priority = 2
         elif source == "grammar_fallback":
             source_priority = 0
@@ -2609,7 +2948,48 @@ class KnowledgeGraphAgent:
         retrieval_latency = 0.0
         correction_tokens = 0
 
-        if self.use_grammar_first_retrieval:
+        parserless_retrieval = self.use_grammar_first_retrieval or self.use_grammar_compiled_retrieval
+
+        if self.use_grammar_compiled_retrieval:
+            p1_tokens = 0
+            gen_t0 = time.perf_counter()
+            candidates, entity_seed_count = self._make_grammar_compiled_candidates(
+                user_prompt,
+                top_k=self.valid_chain_fallback_topk,
+            )
+            retrieval_latency += time.perf_counter() - gen_t0
+            print(
+                f"[GrammarCompiled] entity_seeds={entity_seed_count} "
+                f"generated {len(candidates)} KG-valid candidates | tokens~0",
+                flush=True,
+            )
+            if self.use_valid_chain_llm_rerank and len(candidates) > 1:
+                rerank_t0 = time.perf_counter()
+                for idx, cand in enumerate(candidates):
+                    cand["_grammar_compiled_idx"] = idx
+                    cand["kb_result"] = self._check_chain_validity(cand["entity"], cand["chain"])
+                rerank_order, rerank_tokens = await self._rerank_valid_chain_candidates_with_llm(
+                    user_prompt,
+                    candidates,
+                )
+                parse_latency += time.perf_counter() - rerank_t0
+                correction_tokens += rerank_tokens
+                order_pos = {idx: pos for pos, idx in enumerate(rerank_order)}
+                denom = max(len(candidates) - 1, 1)
+                for cand in candidates:
+                    idx = int(cand.get("_grammar_compiled_idx", 0))
+                    cand["llm_rerank_score"] = 1.0 - (order_pos.get(idx, len(candidates)) / denom)
+                candidates.sort(
+                    key=lambda cand: (
+                        order_pos.get(cand.get("_grammar_compiled_idx", 0), len(candidates)),
+                        cand.get("_grammar_compiled_idx", 0),
+                    )
+                )
+                candidates = candidates[: self.valid_chain_fallback_topk]
+                print(f"[GrammarCompiled] LLM reranked KG-valid candidates | tokens~{rerank_tokens}", flush=True)
+            else:
+                candidates = candidates[: self.valid_chain_fallback_topk]
+        elif self.use_grammar_first_retrieval:
             p1_tokens = 0
             gen_t0 = time.perf_counter()
             candidates, entity_seed_count = self._make_grammar_first_candidates(
@@ -2654,7 +3034,7 @@ class KnowledgeGraphAgent:
             parse_latency += time.perf_counter() - parse_t0
             print(f"[Parse 1] got {len(candidates)} candidates | tokens~{p1_tokens}", flush=True)
 
-        if not candidates and not self.use_grammar_first_retrieval:
+        if not candidates and not parserless_retrieval:
             fallback_entities = self._extract_entity_candidates_from_question(user_prompt)
             fallback_pool = []
             if self.use_deterministic_valid_chain_fallback and fallback_entities:
@@ -2760,6 +3140,11 @@ class KnowledgeGraphAgent:
             grammar_score = grammar_features["score"]
             source = cand.get("source", "llm")
             llm_rerank_score = float(cand.get("llm_rerank_score", 0.0) or 0.0)
+            if source == "grammar_compiled":
+                llm_rerank_score = max(
+                    llm_rerank_score,
+                    float(cand.get("compiled_rank_score", 0.0) or 0.0),
+                )
             confidence = max(float(cand.get("confidence", 0.0) or 0.0), llm_rerank_score)
             ranking_key = self._score_candidate(
                 entity, chain, kb_result, grammar_features, rank_idx,
@@ -2786,6 +3171,22 @@ class KnowledgeGraphAgent:
                 "llm_rerank_score": llm_rerank_score,
                 "ranking_key": ranking_key,
             }
+            for meta_key in (
+                "compiled_rank_key",
+                "compiled_rank_score",
+                "compiled_preferred_coverage",
+                "compiled_all_preferred_covered",
+                "compiled_target_last",
+                "compiled_target_present",
+                "compiled_rule_support",
+                "compiled_activated_rule_count",
+                "compiled_activated_relation_count",
+                "compiled_preferred_rels",
+                "compiled_target_rels",
+                "compiled_local_relation_count",
+            ):
+                if meta_key in cand:
+                    row[meta_key] = cand[meta_key]
             ranked_candidates.append(row)
             if not kb_result["valid"]:
                 failed_candidates.append(row)
@@ -3011,6 +3412,9 @@ class KnowledgeGraphAgent:
                 "retrieval_policy": subgraph.get("retrieval_policy", "unknown"),
                 "expansion_gate": subgraph.get("expansion_gate", ""),
             })
+            if cand.get("source") == "grammar_compiled":
+                row["retrieval_policy"] = "grammar_compiled"
+                row["expansion_gate"] = "compiled_relation_chain"
             subgraph_candidates.append(row)
 
         if not subgraph_candidates:
