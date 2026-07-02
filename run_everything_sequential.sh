@@ -5,15 +5,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STAMP="${RERUN_STAMP:-$(date +%Y%m%d-%H%M%S)}"
 PYTHON_BIN="${PYTHON_BIN:-$ROOT_DIR/.venv/bin/python}"
 
-ARTIFACTS_ROOT="${ARTIFACTS_ROOT:-$ROOT_DIR/artifacts_full}"
-RUN_TAG_SUFFIX="${RUN_TAG_SUFFIX:-full-${STAMP}}"
-PREFLIGHT_DIR="$ARTIFACTS_ROOT/_preflight/$STAMP"
+RANKING_POLICY="${RANKING_POLICY:-lax-hrg-prior-v1}"
+ARTIFACTS_ROOT="${ARTIFACTS_ROOT:-$ROOT_DIR/artifacts_laxhrg}"
+RUN_TAG_SUFFIX="${RUN_TAG_SUFFIX:-laxhrg-full-${STAMP}}"
+PREFLIGHT_DIR="$ARTIFACTS_ROOT/_preflight/${RANKING_POLICY}-${STAMP}"
 SUMMARY_DIR="$ARTIFACTS_ROOT/_summary"
 
 mkdir -p "$PREFLIGHT_DIR" "$SUMMARY_DIR"
 
 export ARTIFACTS_ROOT
 export RUN_TAG_SUFFIX
+export RANKING_POLICY
 export EXPERIMENT_SUITE="${EXPERIMENT_SUITE:-full}"
 export ENABLE_RELATION_NGRAM_SPECS="${ENABLE_RELATION_NGRAM_SPECS:-1}"
 export ENABLE_BFS_CAP_SPECS="${ENABLE_BFS_CAP_SPECS:-1}"
@@ -111,6 +113,7 @@ PY
 log "Starting sequential full rerun"
 log "artifacts=$ARTIFACTS_ROOT"
 log "run_tag_suffix=$RUN_TAG_SUFFIX"
+log "ranking_policy=$RANKING_POLICY"
 log "preflight=$PREFLIGHT_DIR"
 
 require_file "$PYTHON_BIN" "PYTHON_BIN"

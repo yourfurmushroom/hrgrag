@@ -629,6 +629,9 @@ class BaselineKnowledgeGraphAgent:
                     "retrieval_precision": 0.0,
                     "retrieval_f1": 0.0,
                     "subgraph_size": 0,
+                    "raw_retrieved_edge_count": 0,
+                    "raw_final_edge_count": 0,
+                    "context_truncated": False,
                     "selected_depth": hop_override if hop_override is not None else self.bfs_depth,
                     "serialization_format": "baseline_bfs_text",
                     "final_context": "",
@@ -652,6 +655,16 @@ class BaselineKnowledgeGraphAgent:
                 "generation_latency": 0.0,
                 "generation_failed": False,
                 "answerable": True,
+                "edges": [],
+                "candidates": [],
+                "spine_edges": [],
+                "expanded_edges": [],
+                "selected_candidate": {},
+                "selected_chain": [],
+                "selected_entity": entity,
+                "raw_retrieved_edge_count": 0,
+                "raw_final_edge_count": 0,
+                "context_truncated": False,
             }
 
         # 2. True BFS expand (no chain guidance)
@@ -659,10 +672,11 @@ class BaselineKnowledgeGraphAgent:
         depth = hop_override if hop_override is not None else self.bfs_depth
         raw_edges = self._bfs_expand(entity, depth=depth)
         edges = self._apply_context_budgets(raw_edges)
+        context_truncated = len(edges) != len(raw_edges)
         retrieval_latency = time.perf_counter() - retrieval_t0
         subgraph_size = len(edges)
         self.total_subgraph_size += subgraph_size
-        if len(edges) != len(raw_edges):
+        if context_truncated:
             print(
                 f"[BFS Budget] kept={len(edges)} raw={len(raw_edges)} "
                 f"token_budget={self.context_token_budget} edge_budget={self.context_edge_budget}"
@@ -717,6 +731,9 @@ class BaselineKnowledgeGraphAgent:
                 "selected_depth": depth,
                 "context_token_budget": self.context_token_budget,
                 "context_edge_budget": self.context_edge_budget,
+                "raw_retrieved_edge_count": len(raw_edges),
+                "raw_final_edge_count": len(raw_edges),
+                "context_truncated": context_truncated,
                 "serialization_format": "baseline_bfs_text",
                 "final_context": context_str,
                 "timing": {
@@ -762,6 +779,12 @@ class BaselineKnowledgeGraphAgent:
             "selected_candidate": candidate_payload[0] if candidate_payload else {},
             "selected_chain": [],
             "selected_entity": entity,
+            "raw_bfs_edges": raw_edges,
+            "raw_retrieved_edge_count": len(raw_edges),
+            "raw_final_edge_count": len(raw_edges),
+            "context_truncated": context_truncated,
+            "context_token_budget": self.context_token_budget,
+            "context_edge_budget": self.context_edge_budget,
         }
 
 

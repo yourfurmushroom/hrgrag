@@ -14,8 +14,9 @@ export BFS_CONTEXT_TOKEN_BUDGETS="${BFS_CONTEXT_TOKEN_BUDGETS:-200 500 1000}"
 export FIXED_ABLATION_BUDGET="${FIXED_ABLATION_BUDGET:-1}"
 export RETRY_FAILED="${RETRY_FAILED:-1}"
 export SAMPLE_LIMIT="${SAMPLE_LIMIT:-50}"
-export RUN_TAG_SUFFIX="${RUN_TAG_SUFFIX:-full-${STAMP}}"
-export ARTIFACTS_ROOT="${ARTIFACTS_ROOT:-$ROOT_DIR/artifacts_full}"
+export RANKING_POLICY="${RANKING_POLICY:-lax-hrg-prior-v1}"
+export RUN_TAG_SUFFIX="${RUN_TAG_SUFFIX:-laxhrg-full-${STAMP}}"
+export ARTIFACTS_ROOT="${ARTIFACTS_ROOT:-$ROOT_DIR/artifacts_laxhrg}"
 
 CONFIGS=(
   "$ROOT_DIR/configs/config.metaqa.env"
@@ -26,6 +27,7 @@ CONFIGS=(
 
 echo "[full-rerun] artifacts=$ARTIFACTS_ROOT"
 echo "[full-rerun] run_tag_suffix=$RUN_TAG_SUFFIX"
+echo "[full-rerun] ranking_policy=$RANKING_POLICY"
 echo "[full-rerun] suite=$EXPERIMENT_SUITE sample_limit=$SAMPLE_LIMIT"
 
 for config in "${CONFIGS[@]}"; do

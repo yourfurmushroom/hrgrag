@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="850" viewBox="0 0 1500 850">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#5f6b73"/>
+</marker>
+<filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+<feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#0f172a" flood-opacity="0.12"/>
+</filter>
+</defs>
+<rect x="0" y="0" width="1500" height="850" fill="white"/>
+<text x="40.0" y="42.0" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#172026" text-anchor="start">Fallback sources: failure forms and recovery methods</text>
+<text x="60.0" y="88.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#5f6b73" text-anchor="start">Every fallback candidate is revalidated against the KG before retrieval.</text>
+<rect x="55.0" y="135.0" width="335.0" height="455.0" rx="8.0" fill="white" stroke="#2563eb" stroke-width="1" filter="url(#shadow)"/>
+<rect x="79.0" y="160.0" width="210.0" height="30.0" rx="15.0" fill="#2563eb" stroke="none" stroke-width="1"/>
+<text x="184.0" y="180.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">LLM correction</text>
+<text x="79.0" y="233.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">Observed failure form</text>
+<text x="79.0" y="267.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Failure: relation alias or wrong</text>
+<text x="79.0" y="290.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">order</text>
+<text x="79.0" y="355.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">How it is recovered</text>
+<text x="79.0" y="389.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Recovery: ask LLM to repair</text>
+<text x="79.0" y="412.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">failed hop, then KB-validate</text>
+<text x="79.0" y="487.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">Example</text>
+<text x="79.0" y="521.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#2563eb" text-anchor="start">directed -&gt; directed_by</text>
+<rect x="415.0" y="135.0" width="335.0" height="455.0" rx="8.0" fill="white" stroke="#0f766e" stroke-width="1" filter="url(#shadow)"/>
+<rect x="439.0" y="160.0" width="210.0" height="30.0" rx="15.0" fill="#0f766e" stroke="none" stroke-width="1"/>
+<text x="544.0" y="180.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">KG-valid fallback</text>
+<text x="439.0" y="233.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">Observed failure form</text>
+<text x="439.0" y="267.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Failure: no parsed chain is</text>
+<text x="439.0" y="290.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">executable</text>
+<text x="439.0" y="355.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">How it is recovered</text>
+<text x="439.0" y="389.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Recovery: enumerate local</text>
+<text x="439.0" y="412.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">executable chains from the</text>
+<text x="439.0" y="435.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">grounded entity</text>
+<text x="439.0" y="487.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">Example</text>
+<text x="439.0" y="521.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#0f766e" text-anchor="start">Linda Evans -&gt; starred_actors -&gt;</text>
+<text x="439.0" y="543.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#0f766e" text-anchor="start">directed_by</text>
+<rect x="775.0" y="135.0" width="335.0" height="455.0" rx="8.0" fill="white" stroke="#7c3aed" stroke-width="1" filter="url(#shadow)"/>
+<rect x="799.0" y="160.0" width="210.0" height="30.0" rx="15.0" fill="#7c3aed" stroke="none" stroke-width="1"/>
+<text x="904.0" y="180.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">HRG-supported fallback</text>
+<text x="799.0" y="233.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">Observed failure form</text>
+<text x="799.0" y="267.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Failure: many executable chains</text>
+<text x="799.0" y="290.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">compete</text>
+<text x="799.0" y="355.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">How it is recovered</text>
+<text x="799.0" y="389.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Recovery: use grammar hit,</text>
+<text x="799.0" y="412.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">ordered path, and grammar score</text>
+<text x="799.0" y="435.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">for ranking</text>
+<text x="799.0" y="487.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">Example</text>
+<text x="799.0" y="521.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#7c3aed" text-anchor="start">prefer common actor-movie-</text>
+<text x="799.0" y="543.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#7c3aed" text-anchor="start">director pattern</text>
+<rect x="1135.0" y="135.0" width="335.0" height="455.0" rx="8.0" fill="white" stroke="#c2410c" stroke-width="1" filter="url(#shadow)"/>
+<rect x="1159.0" y="160.0" width="210.0" height="30.0" rx="15.0" fill="#c2410c" stroke="none" stroke-width="1"/>
+<text x="1264.0" y="180.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">GrammarFirst diagnostic</text>
+<text x="1159.0" y="233.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">Observed failure form</text>
+<text x="1159.0" y="267.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Failure: LLM hop/chain prior is</text>
+<text x="1159.0" y="290.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">wrong</text>
+<text x="1159.0" y="355.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">How it is recovered</text>
+<text x="1159.0" y="389.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Recovery: HRG path-bank first,</text>
+<text x="1159.0" y="412.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">KG executable filtering second</text>
+<text x="1159.0" y="487.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#5f6b73" text-anchor="start">Example</text>
+<text x="1159.0" y="521.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#c2410c" text-anchor="start">entity seed -&gt; HRG path-bank -&gt;</text>
+<text x="1159.0" y="543.0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#c2410c" text-anchor="start">KG path</text>
+<rect x="210.0" y="675.0" width="1080.0" height="80.0" rx="8.0" fill="#fff7ed" stroke="#fed7aa" stroke-width="1"/>
+<text x="750.0" y="708.0" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#c2410c" text-anchor="middle">Important boundary</text>
+<text x="750.0" y="739.0" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" fill="#172026" text-anchor="middle">Executability solves syntax; semantic relevance still needs relation cues, answer type, and ranking.</text>
+</svg>

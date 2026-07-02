@@ -71,12 +71,12 @@
 <text x="1112.0" y="526.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#5f6b73" text-anchor="start">LLM</text>
 <rect x="120.0" y="595.0" width="600.0" height="145.0" rx="8.0" fill="#ecfdf5" stroke="#86efac" stroke-width="1"/>
 <text x="150.0" y="630.0" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#15803d" text-anchor="start">Main evidence claim</text>
-<text x="150.0" y="665.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">MetaQA: BFS 4415.83 context tokens</text>
-<text x="150.0" y="689.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">HRG-Proposed-triple: 77.26 context tokens</text>
-<text x="150.0" y="713.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">HRG is evaluated as a structural prior, not only compression</text>
+<text x="150.0" y="665.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">MetaQA legacy gpt-oss, 200 questions per hop</text>
+<text x="150.0" y="689.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">BFS: 4415.83 context tokens</text>
+<text x="150.0" y="713.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">HRG-Proposed-triple: 77.26 context tokens</text>
 <rect x="780.0" y="595.0" width="600.0" height="145.0" rx="8.0" fill="#fff7ed" stroke="#fed7aa" stroke-width="1"/>
 <text x="810.0" y="630.0" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#c2410c" text-anchor="start">Claim boundary</text>
-<text x="810.0" y="665.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Not a claim of universal accuracy improvement</text>
-<text x="810.0" y="689.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">MLPQ / KQAPro remain hard cases</text>
-<text x="810.0" y="713.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">HRG is a structural prior for evidence retrieval</text>
+<text x="810.0" y="665.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Main claim: compact, traceable evidence</text>
+<text x="810.0" y="689.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">HRG supplies grammar and ranking signals</text>
+<text x="810.0" y="713.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Report model, sample size, and artifact source</text>
 </svg>

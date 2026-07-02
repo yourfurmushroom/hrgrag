@@ -231,17 +231,17 @@ def fig_01_pipeline() -> None:
     svg.rect(120, 595, 600, 145, "#ecfdf5", stroke="#86efac", rx=8)
     svg.text(150, 630, "Main evidence claim", size=21, weight=700, color=PALETTE["ok"])
     svg.multiline(150, 665, [
-        "MetaQA: BFS 4415.83 context tokens",
+        "MetaQA legacy gpt-oss, 200 questions per hop",
+        "BFS: 4415.83 context tokens",
         "HRG-Proposed-triple: 77.26 context tokens",
-        "HRG is evaluated as a structural prior, not only compression",
     ], size=17, color=PALETTE["ink"], line_h=24)
 
     svg.rect(780, 595, 600, 145, "#fff7ed", stroke="#fed7aa", rx=8)
     svg.text(810, 630, "Claim boundary", size=21, weight=700, color=PALETTE["warn"])
     svg.multiline(810, 665, [
-        "Not a claim of universal accuracy improvement",
-        "MLPQ / KQAPro remain hard cases",
-        "HRG is a structural prior for evidence retrieval",
+        "Main claim: compact, traceable evidence",
+        "HRG supplies grammar and ranking signals",
+        "Report model, sample size, and artifact source",
     ], size=17, color=PALETTE["ink"], line_h=24)
     svg.save(IMG_DIR / "01_method_pipeline.svg")
 
@@ -362,7 +362,8 @@ def fig_03_explainability_output() -> None:
 
 def fig_04_compression_bars() -> None:
     res = get_metaqa_results()
-    svg = SVG(1500, 850, "MetaQA compression: HRG-Proposed context and subgraph size vs BFS")
+    svg = SVG(1500, 850, "MetaQA legacy gpt-oss, 200-per-hop: context and edge compression")
+    svg.text(80, 92, "Source: artifect_all/metaqa-vanilla-test; values match the gpt-oss column in the main result table.", size=18, color=PALETTE["muted"], weight=700)
     labels = ["BFS", "Spine Triple", "HRG Triple"]
     ctx = [res[l]["avg_ctx_tokens"] for l in labels]
     subg = [res[l]["avg_subgraph_size"] for l in labels]
@@ -381,19 +382,19 @@ def fig_04_compression_bars() -> None:
             svg.text(bx + 47, base - bh - 12, f"{val:.2f}{suffix}", size=16, color=colors[i], weight=700, anchor="middle")
         svg.line(x0 + 55, base, x0 + 560, base, color=PALETTE["line"], sw=2)
 
-    bar_panel(70, 140, "Average context tokens", ctx, "", [PALETTE["bfs"], PALETTE["spine"], PALETTE["blue"]])
-    bar_panel(810, 140, "Average retrieved edges", subg, "", [PALETTE["bfs"], PALETTE["spine"], PALETTE["blue"]])
+    bar_panel(70, 150, "Final context tokens", ctx, "", [PALETTE["bfs"], PALETTE["spine"], PALETTE["blue"]])
+    bar_panel(810, 150, "Retrieved evidence edges", subg, "", [PALETTE["bfs"], PALETTE["spine"], PALETTE["blue"]])
 
     svg.rect(170, 730, 1160, 70, "#ecfdf5", stroke="#86efac", rx=8)
-    svg.text(750, 773, "HRG-Proposed-triple uses 1.75% of BFS context in this MetaQA setting.", size=24, color=PALETTE["ok"], weight=700, anchor="middle")
+    svg.text(750, 773, "HRG-Proposed-triple keeps the evidence context at 1.75% of BFS for this gpt-oss run.", size=23, color=PALETTE["ok"], weight=700, anchor="middle")
     svg.save(IMG_DIR / "04_metaqa_token_subgraph_compression.svg")
 
 
 def fig_05_quality_vs_tokens() -> None:
     res = get_metaqa_results()
-    svg = SVG(1500, 850, "MetaQA quality-cost trade-off: answer-set F1 vs context")
+    svg = SVG(1500, 850, "MetaQA legacy gpt-oss, 200-per-hop: quality-cost trade-off")
     svg.rect(90, 120, 1120, 580, "white", stroke=PALETTE["line"], rx=8)
-    svg.text(130, 160, "X = avg context tokens, Y = answer-set F1", size=19, color=PALETTE["muted"], weight=700)
+    svg.text(130, 160, "X = final context tokens, Y = answer-set F1; same source as the gpt-oss table column", size=18, color=PALETTE["muted"], weight=700)
 
     x_min, x_max = 0, 4600
     y_min, y_max = 0.54, 0.68
@@ -436,23 +437,24 @@ def fig_05_quality_vs_tokens() -> None:
     svg.text(1265, 200, "Takeaway", size=22, color=PALETTE["spine"], weight=700)
     svg.multiline(1265, 245, [
         "Main claim:",
-        "quality-cost",
-        "trade-off.",
+        "compact",
+        "traceable",
+        "evidence.",
         "",
         "Report F1,",
-        "evidence, and",
+        "coverage, and",
         "tokens together.",
     ], size=17, color=PALETTE["ink"], line_h=25)
     svg.save(IMG_DIR / "05_metaqa_quality_vs_tokens.svg")
 
 
 def fig_06_dataset_matrix() -> None:
-    svg = SVG(1500, 850, "Where HRG-Proposed evidence is strong or limited")
+    svg = SVG(1500, 850, "Where HRG-guided executable evidence is most useful")
     rows = [
-        ("MetaQA", "Usable", "Very strong", "Main compression evidence", PALETTE["ok"]),
+        ("MetaQA", "In scope", "Very strong", "Main compact-evidence evidence", PALETTE["ok"]),
         ("WikiMovies", "Near ceiling", "Small graph", "BFS already compact", PALETTE["gold"]),
-        ("MLPQ", "Hard case", "HRG helps evidence", "Cross-lingual relations", PALETTE["warn"]),
-        ("KQAPro", "Hard case", "HRG helps evidence", "Operators / qualifiers", PALETTE["red"]),
+        ("MLPQ", "Stress test", "HRG recovers evidence", "Cross-lingual relations", PALETTE["warn"]),
+        ("KQAPro", "Stress test", "HRG recovers evidence", "Operators / qualifiers", PALETTE["red"]),
     ]
     x, y = 80, 150
     col_w = [210, 240, 280, 470]
@@ -477,7 +479,7 @@ def fig_06_dataset_matrix() -> None:
 
     svg.rect(90, 675, 1290, 90, "#fff7ed", stroke="#fed7aa", rx=8)
     svg.text(125, 710, "Recommended defense", size=22, color=PALETTE["warn"], weight=700)
-    svg.text(125, 745, "Use MetaQA for compression; use MLPQ/KQAPro to show HRG evidence coverage under hard semantics.", size=20, color=PALETTE["ink"])
+    svg.text(125, 745, "Use MetaQA as the in-scope result; use MLPQ/KQAPro as diagnostic evidence-recovery stress tests.", size=20, color=PALETTE["ink"])
     svg.save(IMG_DIR / "06_dataset_takeaway_matrix.svg")
 
 
@@ -628,7 +630,7 @@ def fig_10_failure_counts() -> None:
         f = d.get("failure_counts", {})
         rows.append((ds, f.get("ok", 0), f.get("no_candidates", 0), f.get("no_valid_chain", 0)))
 
-    svg = SVG(1500, 850, "Failure analysis: where HRG-Proposed still breaks")
+    svg = SVG(1500, 850, "Diagnostic failures: when executable evidence needs stronger semantics")
     svg.rect(95, 125, 1280, 590, "white", stroke=PALETTE["line"], rx=8)
     headers = ["Dataset", "ok", "no_candidates", "no_valid_chain", "Interpretation"]
     widths = [180, 150, 210, 210, 470]
@@ -667,7 +669,7 @@ def fig_10_failure_counts() -> None:
         yy += 115
 
     svg.rect(190, 755, 1120, 58, "#fff7ed", stroke="#fed7aa", rx=8)
-    svg.text(750, 792, "Use this figure to explain limits; HRG helps retrieval evidence but does not solve every semantic operator.", size=20, color=PALETTE["warn"], weight=700, anchor="middle")
+    svg.text(750, 792, "Use this as diagnostic scope evidence: HRG recovers structure, while semantic filters remain future work.", size=20, color=PALETTE["warn"], weight=700, anchor="middle")
     svg.save(IMG_DIR / "10_failure_counts_spine_correction.svg")
 
 
@@ -735,6 +737,167 @@ def fig_12_evaluation_design() -> None:
     svg.save(IMG_DIR / "12_evaluation_design.svg")
 
 
+def fig_20_bfs_vs_hrg_process() -> None:
+    svg = SVG(1500, 850, "Canonical BFS KG-RAG vs HRG-guided executable retrieval")
+    svg.text(70, 92, "Baseline KG-RAG", size=24, color=PALETTE["bfs"], weight=700)
+    svg.text(820, 92, "This work", size=24, color=PALETTE["spine"], weight=700)
+
+    def box(x: int, y: int, title: str, body: str, color: str, fill: str = "white") -> None:
+        svg.rect(x, y, 255, 90, fill, stroke=color, rx=8, shadow=True)
+        svg.text(x + 18, y + 30, title, size=18, color=color, weight=700)
+        svg.multiline(x + 18, y + 56, wrap(body, 28), size=14, color=PALETTE["ink"], line_h=17)
+
+    # Baseline side
+    left_steps = [
+        ("Ground entity", "Linda Evans"),
+        ("BFS expand", "all 1..h-hop neighbors"),
+        ("Serialize", "hundreds of mixed triples"),
+        ("LLM answer", "answer from noisy context"),
+    ]
+    for i, (title, body) in enumerate(left_steps):
+        y = 135 + i * 130
+        box(70, y, title, body, PALETTE["bfs"], "#f8fafc")
+        if i:
+            svg.line(198, y - 35, 198, y - 5, color=PALETTE["muted"], sw=2.5, arrow=True)
+
+    # Visual BFS fanout
+    cx, cy = 510, 260
+    svg.circle(cx, cy, 28, PALETTE["bfs"])
+    svg.text(cx, cy + 6, "E", size=18, color="white", weight=700, anchor="middle")
+    for i, ang in enumerate([-70, -35, 0, 35, 70]):
+        x1 = cx + 120 * math.cos(math.radians(ang))
+        y1 = cy + 120 * math.sin(math.radians(ang))
+        svg.line(cx + 28 * math.cos(math.radians(ang)), cy + 28 * math.sin(math.radians(ang)), x1, y1, color=PALETTE["bfs"], sw=2)
+        svg.circle(x1, y1, 20, "#cbd5e1", stroke=PALETTE["bfs"])
+        for j, off in enumerate([-18, 18]):
+            x2 = x1 + 80
+            y2 = y1 + off
+            svg.line(x1 + 20, y1, x2 - 18, y2, color="#cbd5e1", sw=1.5)
+            svg.circle(x2, y2, 15, "#e2e8f0", stroke="#94a3b8")
+    svg.rect(420, 540, 285, 94, "#fff7ed", stroke="#fed7aa", rx=8)
+    svg.text(448, 575, "Failure mode", size=19, color=PALETTE["warn"], weight=700)
+    svg.multiline(448, 604, ["Token explosion", "Answer may be present but buried", "No explicit verified path"], size=15, color=PALETTE["ink"], line_h=21)
+
+    # HRG side
+    right_steps = [
+        ("Parse intent", "entity + relation-chain candidates"),
+        ("KB validate", "execute each chain over triples"),
+        ("HRG prior", "grammar hit + fallback/ranking signals"),
+        ("Compact evidence", "only validated spine triples"),
+    ]
+    for i, (title, body) in enumerate(right_steps):
+        y = 135 + i * 130
+        color = PALETTE["purple"] if title == "HRG prior" else PALETTE["spine"]
+        box(820, y, title, body, color, "#f0fdfa" if color == PALETTE["spine"] else "#f5f3ff")
+        if i:
+            svg.line(948, y - 35, 948, y - 5, color=PALETTE["muted"], sw=2.5, arrow=True)
+
+    # HRG path visual
+    draw_node(svg, 1200, 250, "Linda Evans", PALETTE["spine"], w=140)
+    draw_node(svg, 1200, 370, "Mitchell", PALETTE["spine2"], w=130)
+    draw_node(svg, 1200, 490, "Andrew McLaglen", PALETTE["spine"], w=170)
+    draw_edge(svg, 1200, 278, 1200, 342, "starred_actors r-", PALETTE["purple"], sw=3)
+    draw_edge(svg, 1200, 398, 1200, 462, "directed_by r+", PALETTE["purple"], sw=3)
+    svg.rect(1100, 620, 300, 86, "#ecfdf5", stroke="#86efac", rx=8)
+    svg.text(1125, 654, "What is added?", size=19, color=PALETTE["ok"], weight=700)
+    svg.multiline(1125, 683, ["Per-hop validation", "Printable evidence path", "Grammar-aware diagnostics"], size=15, color=PALETTE["ink"], line_h=20)
+
+    svg.rect(210, 750, 1080, 55, "#eef4f8", stroke=PALETTE["line"], rx=8)
+    svg.text(750, 785, "BFS maximizes local coverage; HRG-guided retrieval constrains the context to executable, inspectable evidence.", size=20, color=PALETTE["ink"], weight=700, anchor="middle")
+    svg.save(IMG_DIR / "20_bfs_vs_hrg_process.svg")
+
+
+def fig_21_mcs_triangulation_clique_tree() -> None:
+    svg = SVG(1500, 850, "MCS, triangulation, and clique-tree grammar extraction")
+    svg.text(60, 92, "Conceptual local graph example", size=20, color=PALETTE["muted"], weight=700)
+
+    def small_node(x: int, y: int, label: str, color: str) -> None:
+        svg.circle(x, y, 28, color, stroke="white", sw=2, shadow=True)
+        svg.text(x, y + 6, label, size=16, color="white", weight=700, anchor="middle")
+
+    # Original graph
+    svg.rect(60, 130, 410, 280, "white", stroke=PALETTE["line"], rx=8, shadow=True)
+    svg.text(90, 168, "1. Local skeleton", size=21, color=PALETTE["ink"], weight=700)
+    coords = {"M": (180, 260), "D": (300, 200), "C": (390, 300), "G": (260, 350)}
+    for a, b in [("M", "D"), ("D", "C"), ("C", "G"), ("G", "M")]:
+        x1, y1 = coords[a]
+        x2, y2 = coords[b]
+        svg.line(x1, y1, x2, y2, color=PALETTE["bfs"], sw=2.5)
+    for n, (x, y) in coords.items():
+        small_node(x, y, n, PALETTE["bfs"])
+    svg.multiline(90, 430, ["M=movie, D=director,", "C=country, G=genre", "4-cycle has no chord"], size=15, color=PALETTE["muted"], line_h=20)
+
+    # Triangulated graph
+    svg.rect(545, 130, 410, 280, "white", stroke=PALETTE["line"], rx=8, shadow=True)
+    svg.text(575, 168, "2. MCS + triangulation", size=21, color=PALETTE["ink"], weight=700)
+    coords2 = {"M": (665, 260), "D": (785, 200), "C": (875, 300), "G": (745, 350)}
+    for a, b in [("M", "D"), ("D", "C"), ("C", "G"), ("G", "M")]:
+        x1, y1 = coords2[a]
+        x2, y2 = coords2[b]
+        svg.line(x1, y1, x2, y2, color=PALETTE["bfs"], sw=2.5)
+    svg.line(coords2["D"][0], coords2["D"][1], coords2["G"][0], coords2["G"][1], color=PALETTE["warn"], sw=3, dash="6 5")
+    for n, (x, y) in coords2.items():
+        small_node(x, y, n, PALETTE["spine"])
+    svg.text(795, 287, "fill edge", size=15, color=PALETTE["warn"], weight=700)
+    svg.multiline(575, 430, ["The fill edge is only for", "decomposition; it is not a", "new KG triple."], size=15, color=PALETTE["muted"], line_h=20)
+
+    # Clique tree
+    svg.rect(1030, 130, 410, 280, "white", stroke=PALETTE["line"], rx=8, shadow=True)
+    svg.text(1060, 168, "3. Clique tree", size=21, color=PALETTE["ink"], weight=700)
+    svg.rect(1100, 230, 190, 68, "#f0fdfa", stroke=PALETTE["spine"], rx=8)
+    svg.text(1195, 270, "{M, D, G}", size=21, color=PALETTE["spine"], weight=700, anchor="middle")
+    svg.rect(1100, 330, 190, 68, "#f5f3ff", stroke=PALETTE["purple"], rx=8)
+    svg.text(1195, 370, "{D, C, G}", size=21, color=PALETTE["purple"], weight=700, anchor="middle")
+    svg.line(1195, 298, 1195, 330, color=PALETTE["muted"], sw=2.5, arrow=True)
+    svg.text(1230, 320, "separator {D,G}", size=14, color=PALETTE["muted"])
+    svg.multiline(1060, 430, ["Each bag becomes one local", "grammar rule with external", "attachment nodes."], size=15, color=PALETTE["muted"], line_h=20)
+
+    svg.rect(95, 570, 1310, 135, "#ecfdf5", stroke="#86efac", rx=8)
+    svg.text(125, 612, "Why this matters for retrieval", size=23, color=PALETTE["ok"], weight=700)
+    svg.multiline(125, 650, [
+        "Offline: repeated clique-tree bags become HRG-like structural priors.",
+        "Online: matching relation-path signatures helps rank compact executable evidence instead of expanding every BFS neighbor.",
+        "The triangulation edge is a decomposition artifact, not an added reverse relation or new KG fact.",
+    ], size=18, color=PALETTE["ink"], line_h=27)
+    svg.save(IMG_DIR / "21_mcs_triangulation_clique_tree.svg")
+
+
+def fig_22_fallback_sources_examples() -> None:
+    svg = SVG(1500, 850, "Fallback sources: failure forms and recovery methods")
+    svg.text(60, 88, "Every fallback candidate is revalidated against the KG before retrieval.", size=20, color=PALETTE["muted"], weight=700)
+
+    cols = [
+        ("LLM correction", "Failure: relation alias or wrong order", "Recovery: ask LLM to repair failed hop, then KB-validate", PALETTE["blue"]),
+        ("KG-valid fallback", "Failure: no parsed chain is executable", "Recovery: enumerate local executable chains from the grounded entity", PALETTE["spine"]),
+        ("HRG-supported fallback", "Failure: many executable chains compete", "Recovery: use grammar hit, ordered path, and grammar score for ranking", PALETTE["purple"]),
+        ("GrammarFirst diagnostic", "Failure: LLM hop/chain prior is wrong", "Recovery: HRG path-bank first, KG executable filtering second", PALETTE["warn"]),
+    ]
+    x0, y0, w, h = 55, 135, 335, 455
+    for i, (title, fail, rec, color) in enumerate(cols):
+        x = x0 + i * 360
+        svg.rect(x, y0, w, h, "white", stroke=color, rx=8, shadow=True)
+        svg.pill(x + 24, y0 + 25, title, color, w=210)
+        svg.text(x + 24, y0 + 98, "Observed failure form", size=17, color=PALETTE["muted"], weight=700)
+        svg.multiline(x + 24, y0 + 132, wrap(fail, 32), size=17, color=PALETTE["ink"], line_h=23)
+        svg.text(x + 24, y0 + 220, "How it is recovered", size=17, color=PALETTE["muted"], weight=700)
+        svg.multiline(x + 24, y0 + 254, wrap(rec, 32), size=17, color=PALETTE["ink"], line_h=23)
+        svg.text(x + 24, y0 + 352, "Example", size=17, color=PALETTE["muted"], weight=700)
+        if i == 0:
+            ex = "directed -> directed_by"
+        elif i == 1:
+            ex = "Linda Evans -> starred_actors -> directed_by"
+        elif i == 2:
+            ex = "prefer common actor-movie-director pattern"
+        else:
+            ex = "entity seed -> HRG path-bank -> KG path"
+        svg.multiline(x + 24, y0 + 386, wrap(ex, 32), size=16, color=color, weight=700, line_h=22)
+
+    svg.rect(210, 675, 1080, 80, "#fff7ed", stroke="#fed7aa", rx=8)
+    svg.text(750, 708, "Important boundary", size=21, color=PALETTE["warn"], weight=700, anchor="middle")
+    svg.text(750, 739, "Executability solves syntax; semantic relevance still needs relation cues, answer type, and ranking.", size=19, color=PALETTE["ink"], weight=700, anchor="middle")
+    svg.save(IMG_DIR / "22_fallback_sources_examples.svg")
+
+
 def write_readme() -> None:
     text = """# Thesis Support Figures
 
@@ -745,8 +908,8 @@ Recommended use:
 1. `01_method_pipeline.svg` - method overview.
 2. `02_example_bfs_vs_spine_linda_evans.svg` - show exactly how BFS vs HRG-Proposed retrieves evidence.
 3. `03_explainability_output_linda_evans.svg` - show the printable explanation fields.
-4. `04_metaqa_token_subgraph_compression.svg` - token and edge compression.
-5. `05_metaqa_quality_vs_tokens.svg` - comparable answer quality with fewer tokens.
+4. `04_metaqa_token_subgraph_compression.svg` - gpt-oss legacy 200-per-hop token and edge compression.
+5. `05_metaqa_quality_vs_tokens.svg` - gpt-oss legacy 200-per-hop answer quality with fewer context tokens.
 6. `06_dataset_takeaway_matrix.svg` - which datasets support the claim and which are limitations.
 7. `07_metaqa_hop_analysis.svg` - why the 3-hop result matters.
 8. `08_hrg_grammar_extraction.svg` - paper-style figure for offline grammar learning.
@@ -754,11 +917,14 @@ Recommended use:
 10. `10_failure_counts_spine_correction.svg` - failure analysis across datasets.
 11. `11_dataset_semantics_examples.svg` - why datasets differ.
 12. `12_evaluation_design.svg` - evaluation is quality + efficiency + HRG-supported evidence.
+20. `20_bfs_vs_hrg_process.svg` - canonical BFS KG-RAG compared with HRG-guided executable retrieval.
+21. `21_mcs_triangulation_clique_tree.svg` - MCS, triangulation, clique tree, and HRG rule extraction intuition.
+22. `22_fallback_sources_examples.svg` - failure forms and fallback recovery sources.
 
 Notes:
 
 - Figures 01-12 are thesis-support figures for method explanation, dataset diagnosis, and evaluation design.
-- Some numeric figures use single-model diagnostic settings; the main thesis table remains the four-model average in the method document.
+- Numeric figures must state their source. Figures 04 and 05 use the legacy gpt-oss 200-per-hop MetaQA artifact and match the gpt-oss column in the method document.
 """
     (IMG_DIR / "README.md").write_text(text, encoding="utf-8")
 
@@ -777,6 +943,9 @@ def main() -> None:
     fig_10_failure_counts()
     fig_11_dataset_semantics_examples()
     fig_12_evaluation_design()
+    fig_20_bfs_vs_hrg_process()
+    fig_21_mcs_triangulation_clique_tree()
+    fig_22_fallback_sources_examples()
     write_readme()
 
 

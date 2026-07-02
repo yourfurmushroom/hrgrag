@@ -8,9 +8,9 @@
 </filter>
 </defs>
 <rect x="0" y="0" width="1500" height="850" fill="white"/>
-<text x="40.0" y="42.0" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#172026" text-anchor="start">MetaQA quality-cost trade-off: answer-set F1 vs context</text>
+<text x="40.0" y="42.0" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#172026" text-anchor="start">MetaQA legacy gpt-oss, 200-per-hop: quality-cost trade-off</text>
 <rect x="90.0" y="120.0" width="1120.0" height="580.0" rx="8.0" fill="white" stroke="#c8d1d8" stroke-width="1"/>
-<text x="130.0" y="160.0" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" fill="#5f6b73" text-anchor="start">X = avg context tokens, Y = answer-set F1</text>
+<text x="130.0" y="160.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#5f6b73" text-anchor="start">X = final context tokens, Y = answer-set F1; same source as the gpt-oss table column</text>
 <line x1="170.0" y1="210.0" x2="170.0" y2="630.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
 <text x="170.0" y="658.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#5f6b73" text-anchor="middle">0</text>
 <line x1="376.5" y1="210.0" x2="376.5" y2="630.0" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
@@ -52,10 +52,11 @@
 <rect x="1240.0" y="160.0" width="210.0" height="440.0" rx="8.0" fill="#f0fdfa" stroke="#99f6e4" stroke-width="1"/>
 <text x="1265.0" y="200.0" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#0f766e" text-anchor="start">Takeaway</text>
 <text x="1265.0" y="245.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Main claim:</text>
-<text x="1265.0" y="270.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">quality-cost</text>
-<text x="1265.0" y="295.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">trade-off.</text>
-<text x="1265.0" y="320.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start"></text>
-<text x="1265.0" y="345.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Report F1,</text>
-<text x="1265.0" y="370.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">evidence, and</text>
-<text x="1265.0" y="395.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">tokens together.</text>
+<text x="1265.0" y="270.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">compact</text>
+<text x="1265.0" y="295.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">traceable</text>
+<text x="1265.0" y="320.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">evidence.</text>
+<text x="1265.0" y="345.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start"></text>
+<text x="1265.0" y="370.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">Report F1,</text>
+<text x="1265.0" y="395.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">coverage, and</text>
+<text x="1265.0" y="420.0" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#172026" text-anchor="start">tokens together.</text>
 </svg>

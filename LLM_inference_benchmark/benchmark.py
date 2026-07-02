@@ -74,6 +74,13 @@ if HF_TOKEN:
 # Hop count 對應 BFS 深度（用於 baseline 及 Mode-C)
 HOP_TO_DEPTH = {"1-hop": 1, "2-hop": 2, "3-hop": 3}
 EXPERIMENT_SUITE = os.getenv("EXPERIMENT_SUITE", "core").strip().lower()
+RANKING_POLICY = os.getenv("RANKING_POLICY", "lax-hrg-prior-v1").strip() or "lax-hrg-prior-v1"
+CANDIDATE_RANKING_KEY = (
+    "valid(c), same_arity_grammar_hit(c), ordered_path_grammar_hit(c), "
+    "grammar_label_hit(c), grammar_score(c), matched_rule_count(c), "
+    "llm_rerank_score(c), failed_hop_progress(c), step_survival(c), "
+    "final_frontier_size(c), source_priority(c), llm_confidence(c), -original_index(c)"
+)
 
 
 def suite_enabled(*names: str) -> bool:
@@ -471,27 +478,6 @@ def build_model_specs():
                 )
             )
 
-            specs.extend(
-                paired_serialization_specs(
-                    base_name=f"HRG-GrammarCompiled-{tag}",
-                    model_id=model_id,
-                    shared_group=f"HRG-GrammarCompiled-{tag}",
-                    base_kwargs={
-                        **llm_device_kwargs,
-                        **controlled_budget,
-                        "use_grammar_compiled_retrieval": True,
-                        "use_grammar_first_retrieval": False,
-                        "use_grammar_rerank": True,
-                        "use_grammar_expansion": False,
-                        "use_fallback_correction": False,
-                        "use_deterministic_valid_chain_fallback": False,
-                        "use_valid_chain_llm_rerank": bool_env("HRG_GRAMMAR_COMPILED_LLM_RERANK", False),
-                        "use_grammar_hint": False,
-                        "require_ordered_grammar_match": bool_env("HRG_REQUIRE_ORDERED_GRAMMAR_MATCH", False),
-                    },
-                )
-            )
-
         specs.extend(
             paired_serialization_specs(
                 base_name=f"HRG-Proposed-{tag}",
@@ -609,7 +595,57 @@ EVIDENCE_METRIC_KEYS = [
     "citation_correctness",
 ]
 
-EXTRA_METRIC_KEYS = RETRIEVAL_RANK_METRIC_KEYS + CLAIM_METRIC_KEYS + EVIDENCE_METRIC_KEYS
+EVIDENCE_COVERAGE_METRIC_KEYS = [
+    "endpoint_coverage_final",
+    "endpoint_coverage_spine",
+    "endpoint_coverage_expanded",
+    "answer_in_final_context",
+    "answer_in_spine",
+    "answer_in_expanded_edges",
+    "gold_only_in_expansion",
+]
+
+CONDITIONAL_ANSWER_METRIC_KEYS = [
+    "em_when_answer_in_context",
+    "answer_f1_when_answer_in_context",
+    "em_when_answer_not_in_context",
+    "answer_f1_when_answer_not_in_context",
+    "answer_f1_when_answer_in_spine",
+    "answer_f1_when_answer_only_in_expansion",
+    "answer_in_context_but_wrong",
+    "answer_correct_without_context",
+]
+
+CONTEXT_DIAGNOSTIC_METRIC_KEYS = [
+    "final_edge_count",
+    "spine_edge_count",
+    "expanded_edge_count",
+    "raw_retrieved_edge_count",
+    "context_truncated",
+    "context_truncation_ratio",
+]
+
+GRAMMAR_DIAGNOSTIC_METRIC_KEYS = [
+    "grammar_label_subset_hit",
+    "grammar_ordered_path_hit",
+    "grammar_arity_compatible_hit",
+    "grammar_structural_proxy_hit",
+    "grammar_full_structural_hit",
+]
+
+DIAGNOSTIC_METRIC_KEYS = (
+    EVIDENCE_COVERAGE_METRIC_KEYS
+    + CONDITIONAL_ANSWER_METRIC_KEYS
+    + CONTEXT_DIAGNOSTIC_METRIC_KEYS
+    + GRAMMAR_DIAGNOSTIC_METRIC_KEYS
+)
+
+EXTRA_METRIC_KEYS = (
+    RETRIEVAL_RANK_METRIC_KEYS
+    + CLAIM_METRIC_KEYS
+    + EVIDENCE_METRIC_KEYS
+    + DIAGNOSTIC_METRIC_KEYS
+)
 
 LEGACY_ANSWER_METRIC_KEYS = [
     "bleu",
@@ -1156,6 +1192,105 @@ def calculate_evidence_metrics(details, metadata):
     }
 
 
+def _float_or_none(value) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _binary_from_optional(value) -> Optional[float]:
+    numeric = _float_or_none(value)
+    if numeric is None:
+        return None
+    return 1.0 if numeric > 0 else 0.0
+
+
+def calculate_diagnostic_metrics(details, references, answer_metrics, dataset: Optional[str] = None):
+    details = details or {}
+    answer_metrics = answer_metrics or {}
+
+    final_edges = details.get("edges") or []
+    spine_edges = details.get("spine_edges") or []
+    expanded_edges = details.get("expanded_edges") or []
+
+    final_coverage = _compute_edge_answer_coverage(final_edges, references, dataset=dataset)
+    spine_coverage = _compute_edge_answer_coverage(spine_edges, references, dataset=dataset)
+    expanded_coverage = _compute_edge_answer_coverage(expanded_edges, references, dataset=dataset)
+
+    answer_in_final = 1.0 if final_coverage > 0.0 else 0.0
+    answer_in_spine = 1.0 if spine_coverage > 0.0 else 0.0
+    answer_in_expanded = 1.0 if expanded_coverage > 0.0 else 0.0
+    gold_only_in_expansion = 1.0 if answer_in_expanded and not answer_in_spine else 0.0
+
+    answer_f1 = float(answer_metrics.get("answer_set_f1", 0.0) or 0.0)
+    em = float(answer_metrics.get("em", 0.0) or 0.0)
+
+    raw_count = _float_or_none(details.get("raw_final_edge_count"))
+    if raw_count is None:
+        raw_count = _float_or_none(details.get("raw_retrieved_edge_count"))
+    if raw_count is None and details.get("raw_bfs_edges") is not None:
+        raw_count = float(len(details.get("raw_bfs_edges") or []))
+    if raw_count is None and details.get("raw_expanded_edge_count") is not None:
+        raw_count = float(len(spine_edges) + int(details.get("raw_expanded_edge_count") or 0))
+    if raw_count is None:
+        raw_count = float(len(final_edges))
+
+    final_count = float(len(final_edges))
+    context_truncated = _binary_from_optional(details.get("context_truncated"))
+    if context_truncated is None:
+        context_truncated = 1.0 if raw_count > final_count else 0.0
+    context_truncation_ratio = ((raw_count - final_count) / raw_count) if raw_count > 0 else 0.0
+    context_truncation_ratio = max(0.0, context_truncation_ratio)
+
+    selected_candidate = details.get("selected_candidate") or {}
+    grammar_label = _binary_from_optional(selected_candidate.get("grammar_weak_label_match"))
+    if grammar_label is None:
+        grammar_label = _binary_from_optional(selected_candidate.get("grammar_hit"))
+    if grammar_label is None:
+        grammar_label = _binary_from_optional(details.get("grammar_hit"))
+
+    grammar_ordered = _binary_from_optional(selected_candidate.get("grammar_ordered_path_hit"))
+    grammar_arity = _binary_from_optional(selected_candidate.get("grammar_same_arity_hit"))
+    grammar_structural_proxy = None
+    if grammar_ordered is not None or grammar_arity is not None:
+        grammar_structural_proxy = 1.0 if (grammar_ordered or 0.0) and (grammar_arity or 0.0) else 0.0
+    grammar_full_structural = _binary_from_optional(selected_candidate.get("grammar_full_structural_hit"))
+
+    return {
+        "endpoint_coverage_final": final_coverage,
+        "endpoint_coverage_spine": spine_coverage,
+        "endpoint_coverage_expanded": expanded_coverage,
+        "answer_in_final_context": answer_in_final,
+        "answer_in_spine": answer_in_spine,
+        "answer_in_expanded_edges": answer_in_expanded,
+        "gold_only_in_expansion": gold_only_in_expansion,
+        "em_when_answer_in_context": em if answer_in_final else None,
+        "answer_f1_when_answer_in_context": answer_f1 if answer_in_final else None,
+        "em_when_answer_not_in_context": em if not answer_in_final else None,
+        "answer_f1_when_answer_not_in_context": answer_f1 if not answer_in_final else None,
+        "answer_f1_when_answer_in_spine": answer_f1 if answer_in_spine else None,
+        "answer_f1_when_answer_only_in_expansion": answer_f1 if gold_only_in_expansion else None,
+        "answer_in_context_but_wrong": 1.0 if answer_in_final and answer_f1 <= 0.0 else 0.0,
+        "answer_correct_without_context": 1.0 if (not answer_in_final and answer_f1 > 0.0) else 0.0,
+        "final_edge_count": final_count,
+        "spine_edge_count": float(len(spine_edges)),
+        "expanded_edge_count": float(len(expanded_edges)),
+        "raw_retrieved_edge_count": raw_count,
+        "context_truncated": context_truncated,
+        "context_truncation_ratio": context_truncation_ratio,
+        "grammar_label_subset_hit": grammar_label,
+        "grammar_ordered_path_hit": grammar_ordered,
+        "grammar_arity_compatible_hit": grammar_arity,
+        "grammar_structural_proxy_hit": grammar_structural_proxy,
+        "grammar_full_structural_hit": grammar_full_structural,
+    }
+
+
 def average_metric(results, key):
     values = [r.get(key) for r in results if r.get(key) is not None]
     if not values:
@@ -1273,6 +1408,14 @@ async def async_evaluate_question(
                     "selected_candidate": prepared.get("selected_candidate", {}),
                     "selected_chain": prepared.get("selected_chain", []),
                     "selected_entity": prepared.get("selected_entity"),
+                    "retrieval_recall": prepared.get("retrieval_recall", 0.0),
+                    "retrieval_precision": prepared.get("retrieval_precision", 0.0),
+                    "retrieval_f1": prepared.get("retrieval_f1", 0.0),
+                    "subgraph_size": prepared.get("subgraph_size", 0),
+                    "grammar_hit": prepared.get("grammar_hit", False),
+                    "raw_final_edge_count": prepared.get("raw_final_edge_count"),
+                    "raw_expanded_edge_count": prepared.get("raw_expanded_edge_count"),
+                    "context_truncated": prepared.get("context_truncated"),
                 }
             elif is_baseline and hop_override is not None:
                 response = await agent.ask(
@@ -1297,6 +1440,12 @@ async def async_evaluate_question(
                 dataset=dataset_key,
             )
             evidence_metrics = calculate_evidence_metrics(details or {}, metadata or {})
+            diagnostic_metrics = calculate_diagnostic_metrics(
+                details or {},
+                references,
+                metrics,
+                dataset=dataset_key,
+            )
             pbar.update(1)
 
             payload = {
@@ -1305,6 +1454,9 @@ async def async_evaluate_question(
                 **retrieval_rank_metrics,
                 **claim_metrics,
                 **evidence_metrics,
+                **diagnostic_metrics,
+                "ranking_policy": RANKING_POLICY,
+                "candidate_ranking_key": CANDIDATE_RANKING_KEY,
                 "elapsed": float(elapsed),
                 "failure_stage": (details or {}).get("failure_stage", "ok"),
                 "parse_latency": float((details or {}).get("parse_latency", 0.0) or 0.0),
@@ -1327,6 +1479,8 @@ async def async_evaluate_question(
                 **retrieval_rank_metrics,
                 **claim_metrics,
                 **evidence_metrics,
+                **diagnostic_metrics,
+                "ranking_policy": RANKING_POLICY,
                 "elapsed": float(elapsed),
                 "failure_stage": payload["failure_stage"],
                 "parse_latency": payload["parse_latency"],
@@ -1355,6 +1509,9 @@ async def async_evaluate_question(
                     **{key: 0.0 for key in RETRIEVAL_RANK_METRIC_KEYS},
                     **{key: None for key in CLAIM_METRIC_KEYS},
                     **{key: None for key in EVIDENCE_METRIC_KEYS},
+                    **{key: None for key in DIAGNOSTIC_METRIC_KEYS},
+                    "ranking_policy": RANKING_POLICY,
+                    "candidate_ranking_key": CANDIDATE_RANKING_KEY,
                     "elapsed": 0.0,
                     "error": err_str,
                     "failure_stage": failure_stage,
@@ -1371,6 +1528,8 @@ async def async_evaluate_question(
                 **{key: 0.0 for key in RETRIEVAL_RANK_METRIC_KEYS},
                 **{key: None for key in CLAIM_METRIC_KEYS},
                 **{key: None for key in EVIDENCE_METRIC_KEYS},
+                **{key: None for key in DIAGNOSTIC_METRIC_KEYS},
+                "ranking_policy": RANKING_POLICY,
                 "elapsed": 0.0,
                 "error": err_str,
                 "failure_stage": failure_stage,
@@ -1503,6 +1662,7 @@ async def evaluate_single_model(
                 key: (round(value, 4) if value is not None else None)
                 for key, value in avg_extra_metrics.items()
             },
+            "n_questions": count,
             "avg_latency": round(avg_time, 2),
         }
 
@@ -1563,6 +1723,11 @@ async def evaluate_single_model(
     return {
         "results": model_results,
         **overall,
+        "evaluation_unit": "question",
+        "evaluated_question_count": total_eval_count,
+        "sample_limit": sample_limit,
+        "ranking_policy": RANKING_POLICY,
+        "candidate_ranking_key": CANDIDATE_RANKING_KEY,
         "coverage": coverage,
         "avg_ctx_tokens": avg_ctx_tokens,
         "avg_parse1_tokens": avg_parse1_tokens,
@@ -1599,6 +1764,7 @@ async def main():
     print(f"  {args.dataset.upper()} Benchmark & Data Collection")
     print(f"  Run Tag: {run_tag}")
     print(f"  Experiment Suite: {EXPERIMENT_SUITE}")
+    print(f"  Ranking Policy: {RANKING_POLICY}")
     if args.fixed_ablation_budget:
         print("  Budget Mode: fixed ablation budget")
     if args.kb_ablation_mode != "none" and args.kb_ablation_ratio > 0.0:
@@ -1660,7 +1826,6 @@ async def main():
         if args.model_filter and args.model_filter not in name:
             print(f"[Skip] {run_model_name} 不符合 model filter: {args.model_filter}")
             continue
-
         # Skip if already done. FAILED entries can be retried explicitly.
         if run_model_name in already_done:
             existing = full_report.get(run_model_name)
@@ -1725,6 +1890,8 @@ async def main():
                 "error": str(e),
                 "traceback": tb,
                 "experiment_suite": EXPERIMENT_SUITE,
+                "ranking_policy": RANKING_POLICY,
+                "candidate_ranking_key": CANDIDATE_RANKING_KEY,
                 "fixed_ablation_budget": bool(args.fixed_ablation_budget),
                 "kb_ablation_mode": args.kb_ablation_mode,
                 "kb_ablation_ratio": args.kb_ablation_ratio,
@@ -1794,12 +1961,24 @@ async def main():
             p1 = data.get('avg_parse1_tokens', 0)
             p2 = data.get('avg_parse2_tokens', 0)
             corr = data.get('avg_correction_tokens', 0)
+            ans_ctx = data.get('answer_in_final_context')
+            ans_spine = data.get('answer_in_spine')
+            trunc = data.get('context_truncated')
+            gold_exp = data.get('gold_only_in_expansion')
 
             print(f"{'':30} | {'─'*26} | {'─'*12} | {'─'*12} | {'─'*12}")
             print(f"{'':30} | {'Subgraph Recall':<26} | {recall*100:.2f}%")
             print(f"{'':30} | {'Subgraph Precision':<26} | {prec*100:.2f}%")
             print(f"{'':30} | {'Subgraph F1':<26} | {f1*100:.2f}%")
             print(f"{'':30} | {'Avg Subgraph Size (triples)':<26} | {subg:.1f}")
+            if ans_ctx is not None:
+                print(f"{'':30} | {'Answer in Final Context':<26} | {ans_ctx*100:.2f}%")
+            if ans_spine is not None:
+                print(f"{'':30} | {'Answer in Spine':<26} | {ans_spine*100:.2f}%")
+            if gold_exp is not None:
+                print(f"{'':30} | {'Gold Only in Expansion':<26} | {gold_exp*100:.2f}%")
+            if trunc is not None:
+                print(f"{'':30} | {'Context Truncated':<26} | {trunc*100:.2f}%")
             print(f"{'':30} | {'HRG Grammar Hit Rate':<26} | {cov*100:.2f}%")
             print(f"{'':30} | {'Avg Context Tokens':<26} | ~{int(ctx)}")
             print(f"{'':30} | {'Avg Parse1 Tokens':<26} | ~{int(p1)}")

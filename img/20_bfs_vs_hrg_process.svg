@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="850" viewBox="0 0 1500 850">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#5f6b73"/>
+</marker>
+<filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+<feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#0f172a" flood-opacity="0.12"/>
+</filter>
+</defs>
+<rect x="0" y="0" width="1500" height="850" fill="white"/>
+<text x="40.0" y="42.0" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#172026" text-anchor="start">Canonical BFS KG-RAG vs HRG-guided executable retrieval</text>
+<text x="70.0" y="92.0" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#8b98a5" text-anchor="start">Baseline KG-RAG</text>
+<text x="820.0" y="92.0" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#0f766e" text-anchor="start">This work</text>
+<rect x="70.0" y="135.0" width="255.0" height="90.0" rx="8.0" fill="#f8fafc" stroke="#8b98a5" stroke-width="1" filter="url(#shadow)"/>
+<text x="88.0" y="165.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#8b98a5" text-anchor="start">Ground entity</text>
+<text x="88.0" y="191.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#172026" text-anchor="start">Linda Evans</text>
+<rect x="70.0" y="265.0" width="255.0" height="90.0" rx="8.0" fill="#f8fafc" stroke="#8b98a5" stroke-width="1" filter="url(#shadow)"/>
+<text x="88.0" y="295.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#8b98a5" text-anchor="start">BFS expand</text>
+<text x="88.0" y="321.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#172026" text-anchor="start">all 1..h-hop neighbors</text>
+<line x1="198.0" y1="230.0" x2="198.0" y2="260.0" stroke="#5f6b73" stroke-width="2.5" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="70.0" y="395.0" width="255.0" height="90.0" rx="8.0" fill="#f8fafc" stroke="#8b98a5" stroke-width="1" filter="url(#shadow)"/>
+<text x="88.0" y="425.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#8b98a5" text-anchor="start">Serialize</text>
+<text x="88.0" y="451.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#172026" text-anchor="start">hundreds of mixed triples</text>
+<line x1="198.0" y1="360.0" x2="198.0" y2="390.0" stroke="#5f6b73" stroke-width="2.5" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="70.0" y="525.0" width="255.0" height="90.0" rx="8.0" fill="#f8fafc" stroke="#8b98a5" stroke-width="1" filter="url(#shadow)"/>
+<text x="88.0" y="555.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#8b98a5" text-anchor="start">LLM answer</text>
+<text x="88.0" y="581.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#172026" text-anchor="start">answer from noisy context</text>
+<line x1="198.0" y1="490.0" x2="198.0" y2="520.0" stroke="#5f6b73" stroke-width="2.5" stroke-linecap="round" marker-end="url(#arrow)"/>
+<circle cx="510.0" cy="260.0" r="28.0" fill="#8b98a5" stroke="white" stroke-width="2"/>
+<text x="510.0" y="266.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="white" text-anchor="middle">E</text>
+<line x1="519.6" y1="233.7" x2="551.0" y2="147.2" stroke="#8b98a5" stroke-width="2" stroke-linecap="round"/>
+<circle cx="551.0" cy="147.2" r="20.0" fill="#cbd5e1" stroke="#8b98a5" stroke-width="2"/>
+<line x1="571.0" y1="147.2" x2="613.0" y2="129.2" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round"/>
+<circle cx="631.0" cy="129.2" r="15.0" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+<line x1="571.0" y1="147.2" x2="613.0" y2="165.2" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round"/>
+<circle cx="631.0" cy="165.2" r="15.0" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+<line x1="532.9" y1="243.9" x2="608.3" y2="191.2" stroke="#8b98a5" stroke-width="2" stroke-linecap="round"/>
+<circle cx="608.3" cy="191.2" r="20.0" fill="#cbd5e1" stroke="#8b98a5" stroke-width="2"/>
+<line x1="628.3" y1="191.2" x2="670.3" y2="173.2" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round"/>
+<circle cx="688.3" cy="173.2" r="15.0" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+<line x1="628.3" y1="191.2" x2="670.3" y2="209.2" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round"/>
+<circle cx="688.3" cy="209.2" r="15.0" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+<line x1="538.0" y1="260.0" x2="630.0" y2="260.0" stroke="#8b98a5" stroke-width="2" stroke-linecap="round"/>
+<circle cx="630.0" cy="260.0" r="20.0" fill="#cbd5e1" stroke="#8b98a5" stroke-width="2"/>
+<line x1="650.0" y1="260.0" x2="692.0" y2="242.0" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round"/>
+<circle cx="710.0" cy="242.0" r="15.0" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+<line x1="650.0" y1="260.0" x2="692.0" y2="278.0" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round"/>
+<circle cx="710.0" cy="278.0" r="15.0" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+<line x1="532.9" y1="276.1" x2="608.3" y2="328.8" stroke="#8b98a5" stroke-width="2" stroke-linecap="round"/>
+<circle cx="608.3" cy="328.8" r="20.0" fill="#cbd5e1" stroke="#8b98a5" stroke-width="2"/>
+<line x1="628.3" y1="328.8" x2="670.3" y2="310.8" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round"/>
+<circle cx="688.3" cy="310.8" r="15.0" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+<line x1="628.3" y1="328.8" x2="670.3" y2="346.8" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round"/>
+<circle cx="688.3" cy="346.8" r="15.0" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+<line x1="519.6" y1="286.3" x2="551.0" y2="372.8" stroke="#8b98a5" stroke-width="2" stroke-linecap="round"/>
+<circle cx="551.0" cy="372.8" r="20.0" fill="#cbd5e1" stroke="#8b98a5" stroke-width="2"/>
+<line x1="571.0" y1="372.8" x2="613.0" y2="354.8" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round"/>
+<circle cx="631.0" cy="354.8" r="15.0" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+<line x1="571.0" y1="372.8" x2="613.0" y2="390.8" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round"/>
+<circle cx="631.0" cy="390.8" r="15.0" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+<rect x="420.0" y="540.0" width="285.0" height="94.0" rx="8.0" fill="#fff7ed" stroke="#fed7aa" stroke-width="1"/>
+<text x="448.0" y="575.0" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" fill="#c2410c" text-anchor="start">Failure mode</text>
+<text x="448.0" y="604.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="400" fill="#172026" text-anchor="start">Token explosion</text>
+<text x="448.0" y="625.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="400" fill="#172026" text-anchor="start">Answer may be present but buried</text>
+<text x="448.0" y="646.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="400" fill="#172026" text-anchor="start">No explicit verified path</text>
+<rect x="820.0" y="135.0" width="255.0" height="90.0" rx="8.0" fill="#f0fdfa" stroke="#0f766e" stroke-width="1" filter="url(#shadow)"/>
+<text x="838.0" y="165.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#0f766e" text-anchor="start">Parse intent</text>
+<text x="838.0" y="191.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#172026" text-anchor="start">entity + relation-chain</text>
+<text x="838.0" y="208.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#172026" text-anchor="start">candidates</text>
+<rect x="820.0" y="265.0" width="255.0" height="90.0" rx="8.0" fill="#f0fdfa" stroke="#0f766e" stroke-width="1" filter="url(#shadow)"/>
+<text x="838.0" y="295.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#0f766e" text-anchor="start">KB validate</text>
+<text x="838.0" y="321.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#172026" text-anchor="start">execute each chain over</text>
+<text x="838.0" y="338.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#172026" text-anchor="start">triples</text>
+<line x1="948.0" y1="230.0" x2="948.0" y2="260.0" stroke="#5f6b73" stroke-width="2.5" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="820.0" y="395.0" width="255.0" height="90.0" rx="8.0" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1" filter="url(#shadow)"/>
+<text x="838.0" y="425.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#7c3aed" text-anchor="start">HRG prior</text>
+<text x="838.0" y="451.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#172026" text-anchor="start">grammar hit +</text>
+<text x="838.0" y="468.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#172026" text-anchor="start">fallback/ranking signals</text>
+<line x1="948.0" y1="360.0" x2="948.0" y2="390.0" stroke="#5f6b73" stroke-width="2.5" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="820.0" y="525.0" width="255.0" height="90.0" rx="8.0" fill="#f0fdfa" stroke="#0f766e" stroke-width="1" filter="url(#shadow)"/>
+<text x="838.0" y="555.0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#0f766e" text-anchor="start">Compact evidence</text>
+<text x="838.0" y="581.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#172026" text-anchor="start">only validated spine triples</text>
+<line x1="948.0" y1="490.0" x2="948.0" y2="520.0" stroke="#5f6b73" stroke-width="2.5" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="1130.0" y="229.0" width="140.0" height="42.0" rx="8.0" fill="#0f766e" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1200.0" y="255.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">Linda Evans</text>
+<rect x="1135.0" y="349.0" width="130.0" height="42.0" rx="8.0" fill="#14b8a6" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1200.0" y="375.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">Mitchell</text>
+<rect x="1115.0" y="469.0" width="170.0" height="42.0" rx="8.0" fill="#0f766e" stroke="white" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1200.0" y="495.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">Andrew McLaglen</text>
+<line x1="1200.0" y1="278.0" x2="1200.0" y2="342.0" stroke="#7c3aed" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="1135.4" y="285.0" width="129.2" height="24.0" rx="4.0" fill="white" stroke="#7c3aed" stroke-width="1"/>
+<text x="1200.0" y="302.0" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" fill="#7c3aed" text-anchor="middle">starred_actors r-</text>
+<line x1="1200.0" y1="398.0" x2="1200.0" y2="462.0" stroke="#7c3aed" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="1146.8" y="405.0" width="106.4" height="24.0" rx="4.0" fill="white" stroke="#7c3aed" stroke-width="1"/>
+<text x="1200.0" y="422.0" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" fill="#7c3aed" text-anchor="middle">directed_by r+</text>
+<rect x="1100.0" y="620.0" width="300.0" height="86.0" rx="8.0" fill="#ecfdf5" stroke="#86efac" stroke-width="1"/>
+<text x="1125.0" y="654.0" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" fill="#15803d" text-anchor="start">What is added?</text>
+<text x="1125.0" y="683.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="400" fill="#172026" text-anchor="start">Per-hop validation</text>
+<text x="1125.0" y="703.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="400" fill="#172026" text-anchor="start">Printable evidence path</text>
+<text x="1125.0" y="723.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="400" fill="#172026" text-anchor="start">Grammar-aware diagnostics</text>
+<rect x="210.0" y="750.0" width="1080.0" height="55.0" rx="8.0" fill="#eef4f8" stroke="#c8d1d8" stroke-width="1"/>
+<text x="750.0" y="785.0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#172026" text-anchor="middle">BFS maximizes local coverage; HRG-guided retrieval constrains the context to executable, inspectable evidence.</text>
+</svg>

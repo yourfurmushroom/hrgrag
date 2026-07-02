@@ -18,6 +18,7 @@ ENV/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.ipynb_checkpoints/
 .coverage
 .coverage.*
 htmlcov/
@@ -35,6 +36,11 @@ config.env
 *.pt
 *.pth
 *.bin
+*.onnx
+*.gguf
+*.ggml
+*.h5
+*.hdf5
 
 # Runtime outputs
 artifacts/
@@ -42,10 +48,36 @@ artifacts_*/
 artifacts*/
 artifect_*/
 artifect*/
+new_artifacts/
+new_artifacts_*/
+new_artifacts*/
 results/
 dumps/
 outputs/
 failure_report.jsonl
+*.prepared.pkl
+*.pkl
+*.pickle
+*.joblib
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+nohup.out
+tmux*.log
+*.pid
+*.err
+
+# Experiment trackers and package build products
+runs/
+wandb/
+mlruns/
+lightning_logs/
+tensorboard/
+build/
+dist/
+*.egg-info/
 
 # Generated archives and local handoff bundles
 *.zip
@@ -73,5 +105,10 @@ KBs/
 # Editor / OS files
 .DS_Store
 Thumbs.db
+__MACOSX/
+.nfs*
+*.swp
+*.swo
+*~
 .idea/
 .vscode/
